@@ -10,6 +10,10 @@ const Flags_ = (() => {
       const on = String(r.enabled_default || '').toUpperCase() === 'TRUE';
       map[k] = on;
     });
+
+    // Keep Phase A core enabled by default so action routing is not blocked.
+    map[FLAG.PHASE_A_CORE] = true;
+
     function isOn(key) { return !!map[key]; }
     return { isOn, all: map };
   }
