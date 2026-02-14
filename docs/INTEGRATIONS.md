@@ -59,3 +59,12 @@ The client normalizes responses to:
 
 - Successful responses return `{ ok: true, data }`.
 - Any network, timeout, non-2xx, or parsing error returns `{ ok: false, error }`.
+
+## Health Endpoint
+
+- `GET /api/gas/health`
+- Used to validate app connectivity to the configured GAS WebApp.
+- Requires GAS to implement a `ping` action.
+- Returns normalized JSON in this shape:
+  - Success: `{ ok: true, gas: <response> }`
+  - Error: `{ ok: false, error: "...", gas?: <response> }`
