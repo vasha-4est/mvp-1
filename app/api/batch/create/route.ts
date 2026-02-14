@@ -26,23 +26,26 @@ function validatePayload(body: unknown): { payload?: BatchCreatePayload; error?:
     return { error: "Body must be a JSON object" };
   }
 
-  if (typeof body.code !== "string" || body.code.trim().length === 0) {
+  const codeVal = body.code;
+  if (typeof codeVal !== "string" || codeVal.trim().length === 0) {
     return { error: "Field 'code' is required and must be a non-empty string" };
   }
 
-  if (body.note !== undefined && typeof body.note !== "string") {
+  const noteVal = body.note;
+  if (noteVal !== undefined && typeof noteVal !== "string") {
     return { error: "Field 'note' must be a string when provided" };
   }
 
-  if (body.meta !== undefined && !isRecord(body.meta)) {
+  const metaVal = body.meta;
+  if (metaVal !== undefined && !isRecord(metaVal)) {
     return { error: "Field 'meta' must be an object when provided" };
   }
 
   return {
     payload: {
-      code: body.code.trim(),
-      ...(body.note !== undefined ? { note: body.note } : {}),
-      ...(body.meta !== undefined ? { meta: body.meta } : {}),
+      code: codeVal.trim(),
+      ...(noteVal !== undefined ? { note: noteVal } : {}),
+      ...(metaVal !== undefined ? { meta: metaVal } : {}),
     },
   };
 }
