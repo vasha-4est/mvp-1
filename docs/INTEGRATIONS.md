@@ -60,6 +60,60 @@ The client normalizes responses to:
 - Successful responses return `{ ok: true, data }`.
 - Any network, timeout, non-2xx, or parsing error returns `{ ok: false, error }`.
 
+## Action: `batch_create`
+
+### Route
+- Next.js API route: `POST /api/batch/create`.
+- Internally calls: `callGas("batch_create", payload, requestId)`.
+
+### Request body to Next.js route
+
+```json
+{
+  "code": "TEST-001",
+  "note": "smoke",
+  "meta": { "source": "preview" },
+  "request_id": "optional-idempotency-key"
+}
+```
+
+- `code` is required and must be a non-empty string.
+- `note` is optional.
+- `meta` is optional object (forwarded as payload metadata).
+- `request_id` is optional for clients; if omitted, the route generates one.
+
+### GAS payload and result
+
+Request sent to GAS:
+
+```json
+{
+  "action": "batch_create",
+  "payload": {
+    "code": "TEST-001",
+    "note": "smoke",
+    "meta": { "source": "preview" }
+  },
+  "request_id": "..."
+}
+```
+
+Expected GAS response shape:
+
+```json
+{ "ok": true, "data": { "id": "...", "code": "TEST-001", "status": "created", "created_at": "..." } }
+```
+
+or
+
+```json
+{ "ok": false, "error": "..." }
+```
+
+### Idempotency behavior
+- GAS stores `request_id` in the `batches` sheet.
+- If `batch_create` is called again with the same `request_id`, GAS returns the existing batch row and does not insert a duplicate.
+
 ## Health Endpoint
 
 - `GET /api/gas/health`
