@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>OPS WebApp (MVP-1)</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 16px; }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+      input, select, button { font-size: 16px; padding: 8px 10px; }
+      button { cursor: pointer; }
+      table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+      th, td { border-bottom: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }
+      .small { font-size: 12px; opacity: 0.75; }
+      .chip { display: inline-block; padding: 2px 8px; border: 1px solid #ccc; border-radius: 999px; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h2>Логистика / Сборка (MVP-1)</h2>
+
+    <div class="row">
+      <label>telegram_user_id:</label>
+      <input id="tg" placeholder="123456" />
+      <button onclick="bootstrap()">Войти</button>
+      <span id="who" class="small"></span>
+    </div>
+
+    <hr />
+
+    <div class="row">
+      <button onclick="loadShipments()">Обновить список поставок</button>
+      <select id="shipmentSelect"></select>
+      <button onclick="openShipment()">Открыть</button>
+    </div>
+
+    <div id="shipmentBlock"></div>
+
+    <script>
+      let ACTOR = null;
+      let FLAGS = {};
+      let CURSOR = '';
+      let SHIPMENTS = [];
+
+      function api(action, payload) {
+        const request = {
+          action,
+          request_id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random(),
+          auth: { telegram_user_id: document.getElementById('tg').value.trim() },
+          payload: payload || {},
+        };
+        return fetch(location.href, { method: 'POST', body: JSON.stringify(request) })
+          .then(r => r.json())
+          .then(j => {
+            if (!j.ok) throw new Error((j.error && j.error.code ? j.error.code + ': ' : '') + (j.error ? j.error.message : 'error'));
+            return j.data;
+          });
+      }
+
+      async function bootstrap() {
+        const data = await api('catalog.bootstrap', {});
+        ACTOR = data.actor;
+        FLAGS = data.flags;
+        document.getElementById('who').textContent = `Вы: ${ACTOR.full_name} (${ACTOR.role})`;
+        await loadShipments();
+      }
+
+      async function loadShipments() {
+        const data = await api('shipments.list', {});
+        SHIPMENTS = data.shipments || [];
+        const sel = document.getElementById('shipmentSelect');
+        sel.innerHTML = '';
+        SHIPMENTS.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s.shipment_id;
+          opt.textContent = `${s.shipment_id} — ${s.title || ''} [${s.status || ''}]`;
+          sel.appendChild(opt);
+        });
+      }
+
+      async function openShipment() {
+        const id = document.getElementById('shipmentSelect').value;
+        if (!id) return;
+        const data = await api('shipments.get', { shipment_id: id });
+        renderShipment(data);
+      }
+
+      function renderShipment(data) {
+        const s = data.shipment;
+        const lines = data.lines || [];
+        const pl = data.picking_lines || [];
+        const byLine = {};
+        pl.forEach(x => byLine[x.shipment_line_id] = x);
+
+        let html = `
+          <h3>Поставка: ${s.shipment_id} <span class="chip">${s.status || ''}</span></h3>
+          <div class="small">Канал: ${s.channel || ''} • Дедлайн: ${s.deadline_at || ''}</div>
+          <table>
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Название</th>
+                <th>Нужно</th>
+                <th>Собрано</th>
+                <th>Кто собирает сейчас</th>
+                <th>Кто собрал</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+
+        lines.forEach(l => {
+          const p = byLine[l.shipment_line_id] || {};
+          html += `
+            <tr>
+              <td>${l.sku_id || ''}</td>
+              <td>${l.sku_name || ''}</td>
+              <td>${l.qty_required || ''}</td>
+              <td>${p.qty_picked || 0}</td>
+              <td>${p.in_progress_by_employee_id || ''}</td>
+              <td>${p.picked_by_employee_id || ''}</td>
+            </tr>
+          `;
+        });
+
+        html += `</tbody></table>`;
+        document.getElementById('shipmentBlock').innerHTML = html;
+      }
+    </script>
+  </body>
+</html>
