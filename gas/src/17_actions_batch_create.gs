@@ -1,4 +1,5 @@
 (function initBatchCreateActions_(){
+  const BATCH_REGISTRY_SHEET = 'batch_registry';
   const BATCH_HEADERS = ['id', 'code', 'status', 'created_at', 'request_id', 'note'];
 
   Actions_.register_('batch_create', (ctx) => {
@@ -10,7 +11,7 @@
       throw new Error(ERROR.BAD_REQUEST + ': code is required');
     }
 
-    const sh = ensureBatchesSheet_();
+    const sh = ensureBatchRegistrySheet_();
     const existing = findBatchByRequestId_(sh, ctx.requestId);
     if (existing) {
       return {
@@ -42,26 +43,18 @@
     };
   });
 
-  function ensureBatchesSheet_() {
+  function ensureBatchRegistrySheet_() {
     const ss = Sys_.ss_(DB.OPS);
     if (!ss) throw new Error('Spreadsheet not configured for ' + DB.OPS);
 
-    let sh = ss.getSheetByName('batches');
+    let sh = ss.getSheetByName(BATCH_REGISTRY_SHEET);
     if (!sh) {
-      sh = ss.insertSheet('batches');
+      sh = ss.insertSheet(BATCH_REGISTRY_SHEET);
       sh.getRange(1, 1, 1, BATCH_HEADERS.length).setValues([BATCH_HEADERS]);
       return sh;
     }
 
     if (sh.getLastRow() === 0) {
-      sh.getRange(1, 1, 1, BATCH_HEADERS.length).setValues([BATCH_HEADERS]);
-      return sh;
-    }
-
-    const existingHeader = sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), BATCH_HEADERS.length)).getValues()[0].map(String);
-    const current = existingHeader.slice(0, BATCH_HEADERS.length);
-
-    if (current.join('|') !== BATCH_HEADERS.join('|')) {
       sh.getRange(1, 1, 1, BATCH_HEADERS.length).setValues([BATCH_HEADERS]);
     }
 

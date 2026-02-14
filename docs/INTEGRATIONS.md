@@ -111,7 +111,7 @@ or
 ```
 
 ### Idempotency behavior
-- GAS stores `request_id` in the `batches` sheet.
+- GAS stores `request_id` in the `batch_registry` sheet.
 - If `batch_create` is called again with the same `request_id`, GAS returns the existing batch row and does not insert a duplicate.
 
 ## Health Endpoint
