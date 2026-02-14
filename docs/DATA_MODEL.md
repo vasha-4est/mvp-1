@@ -11,6 +11,7 @@
   - `created_at`
   - `updated_at`
   - `request_id` (idempotent mutation key)
+  - `note` (optional)
 
 ### WIP/Drying
 - Tracks in-process and drying lifecycle state for a batch.
@@ -42,7 +43,7 @@
   - `status`
 
 ## Statuses (baseline)
-- Batch: `created`, `in_progress`, `drying`, `completed`, `stopped`.
+- Batch: `created` (initial status for `batch_create`), `in_progress`, `drying`, `completed`, `stopped`.
 - WIP/Drying: `queued`, `active`, `waiting`, `done`, `stopped`.
 - Stop: `open`, `acknowledged`, `resolved`, `cancelled`.
 - Role/Permission: `active`, `disabled`.
