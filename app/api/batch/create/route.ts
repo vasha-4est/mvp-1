@@ -41,13 +41,19 @@ function validatePayload(body: unknown): { payload?: BatchCreatePayload; error?:
     return { error: "Field 'meta' must be an object when provided" };
   }
 
-  return {
-    payload: {
-      code: codeVal.trim(),
-      ...(noteVal !== undefined ? { note: noteVal } : {}),
-      ...(metaVal !== undefined ? { meta: metaVal } : {}),
-    },
+  const payload: BatchCreatePayload = {
+    code: codeVal.trim(),
   };
+
+  if (noteVal !== undefined) {
+    payload.note = noteVal;
+  }
+
+  if (metaVal !== undefined) {
+    payload.meta = metaVal;
+  }
+
+  return { payload };
 }
 
 export async function POST(request: Request) {
