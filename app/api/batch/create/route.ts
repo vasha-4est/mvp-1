@@ -26,35 +26,36 @@ function validatePayload(body: unknown): { payload?: BatchCreatePayload; error?:
     return { error: "Body must be a JSON object" };
   }
 
-  const codeVal = body.code;
-  if (typeof codeVal !== "string" || codeVal.trim().length === 0) {
+  const codeRaw = body.code;
+  if (typeof codeRaw !== "string" || codeRaw.trim().length === 0) {
     return { error: "Field 'code' is required and must be a non-empty string" };
   }
 
-  const noteVal = body.note;
-  if (noteVal !== undefined && typeof noteVal !== "string") {
-    return { error: "Field 'note' must be a string when provided" };
+  let noteVal: string | undefined;
+  if (body.note !== undefined) {
+    if (typeof body.note !== "string") {
+      return { error: "Field 'note' must be a string when provided" };
+    }
+    noteVal = body.note;
   }
 
-  const metaVal = body.meta;
-  if (metaVal !== undefined && !isRecord(metaVal)) {
-    return { error: "Field 'meta' must be an object when provided" };
+  let metaVal: Record<string, unknown> | undefined;
+  if (body.meta !== undefined) {
+    if (!isRecord(body.meta)) {
+      return { error: "Field 'meta' must be an object when provided" };
+    }
+    metaVal = body.meta;
   }
 
   const payload: BatchCreatePayload = {
-    code: codeVal.trim(),
+    code: codeRaw.trim(),
+    ...(noteVal !== undefined ? { note: noteVal } : {}),
+    ...(metaVal !== undefined ? { meta: metaVal } : {}),
   };
-
-  if (noteVal !== undefined) {
-    payload.note = noteVal;
-  }
-
-  if (metaVal !== undefined) {
-    payload.meta = metaVal;
-  }
 
   return { payload };
 }
+
 
 export async function POST(request: Request) {
   let body: unknown;
