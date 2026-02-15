@@ -76,7 +76,14 @@ export async function POST(request: Request) {
     const gasResponse = await callGas<BatchCreateResult>("batch_create", payload, requestId);
 
     if (!gasResponse.ok || !gasResponse.data) {
-      const errorMessage = gasResponse.error ?? "GAS batch_create failed";
+      const rawErr: unknown = (gasResponse as unknown as { error?: unknown }).error;
+      const errorMessage =
+        typeof rawErr === "string"
+          ? rawErr
+          : rawErr
+          ? JSON.stringify(rawErr)
+          : "GAS batch_create failed";
+
       const lower = errorMessage.toLowerCase();
       const isLockOrTimeout =
         lower.includes("lock_conflict") ||
