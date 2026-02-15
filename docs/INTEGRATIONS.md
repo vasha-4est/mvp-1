@@ -117,6 +117,40 @@ or
 - If `batch_create` is called again with the same `request_id`, GAS returns the existing batch row and does not insert a duplicate.
 - HTTP semantics: `201` on create, `200` on replay, and response includes top-level `replayed` boolean.
 
+
+## Action: `batch_fetch`
+
+### Route
+- Next.js API route: `GET /api/batch/:code`.
+- Requires header `x-gas-api-key: <GAS_API_KEY>` when `GAS_API_KEY` is configured in environment.
+- Internally calls: `callGas("batch_fetch", { code }, requestId)`.
+
+### Query/path behavior
+- Path param `:code` is required.
+- GAS action also supports lookup by `id` (for internal reuse), but route uses `code`.
+
+### Response behavior
+- `200` + `{ ok: true, data: { ...batchRow } }` when found.
+- `404` + `{ ok: false, error: "NOT_FOUND: ..." }` when no row exists.
+
+## Action: `batch_list`
+
+### Route
+- Next.js API route: `GET /api/batch`.
+- Requires header `x-gas-api-key: <GAS_API_KEY>` when `GAS_API_KEY` is configured in environment.
+- Internally calls: `callGas("batch_list", filters, requestId)`.
+
+### Supported query params
+- `status` — exact match.
+- `fromDate=YYYY-MM-DD` — lower bound on `created_at`.
+- `toDate=YYYY-MM-DD` — upper bound on `created_at`.
+- `prefix` — `code` starts with prefix.
+
+### Response behavior
+- `200` + `{ ok: true, data: [] }` when empty.
+- `200` + `{ ok: true, data: [ ... ] }` when matches exist.
+- `400` + `{ ok: false, error }` for invalid date formats/ranges.
+
 ## Health Endpoint
 
 - `GET /api/gas/health`
