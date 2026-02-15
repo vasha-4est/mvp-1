@@ -15,13 +15,14 @@ post_batch() {
   local request_id="$1"
   local extra_json="${2:-}"
 
-  curl -sS -X POST "${BASE_URL}/api/batch/create" \
+  local raw
+  raw="$(curl -sS -w $'\n%{http_code}' -X POST "${BASE_URL}/api/batch/create" \
     -H "Content-Type: application/json" \
     -H "x-gas-api-key: ${GAS_API_KEY}" \
-    -d "{
-      \"request_id\": \"${request_id}\",
-      \"note\": \"smoke\"${extra_json}
-    }"
+    -d "{\n      \"request_id\": \"${request_id}\",\n      \"note\": \"smoke\"${extra_json}\n    }")"
+
+  HTTP_STATUS="$(echo "${raw}" | tail -n1)"
+  HTTP_BODY="$(echo "${raw}" | sed '$d')"
 }
 
 assert_ok() {
@@ -36,6 +37,11 @@ get_code() {
   echo "${json}" | jq -r '.data.code // empty'
 }
 
+get_id() {
+  local json="$1"
+  echo "${json}" | jq -r '.data.id // empty'
+}
+
 get_error() {
   local json="$1"
   echo "${json}" | jq -r '.error // empty'
@@ -43,34 +49,44 @@ get_error() {
 
 echo "[1/5] create batch"
 REQ1="11111111-1111-1111-1111-111111111111"
-RES1="$(post_batch "${REQ1}")"
-echo "${RES1}" | jq
-assert_ok "${RES1}"
-CODE1="$(get_code "${RES1}")"
+post_batch "${REQ1}"
+echo "${HTTP_BODY}" | jq
+[[ "${HTTP_STATUS}" == "201" ]]
+assert_ok "${HTTP_BODY}"
+[[ "$(echo "${HTTP_BODY}" | jq -r '.replayed // empty')" == "false" ]]
+CODE1="$(get_code "${HTTP_BODY}")"
+ID1="$(get_id "${HTTP_BODY}")"
 [[ "${CODE1}" =~ ^B-[0-9]{6}-[0-9]{3}$ ]]
 
 echo "[2/5] replay same request_id"
-RES2="$(post_batch "${REQ1}")"
-echo "${RES2}" | jq
-assert_ok "${RES2}"
-CODE2="$(get_code "${RES2}")"
+post_batch "${REQ1}"
+echo "${HTTP_BODY}" | jq
+[[ "${HTTP_STATUS}" == "200" ]]
+assert_ok "${HTTP_BODY}"
+[[ "$(echo "${HTTP_BODY}" | jq -r '.replayed // empty')" == "true" ]]
+CODE2="$(get_code "${HTTP_BODY}")"
+ID2="$(get_id "${HTTP_BODY}")"
 [[ "${CODE1}" == "${CODE2}" ]]
+[[ "${ID1}" == "${ID2}" ]]
 
 echo "[3/5] create second batch"
 REQ2="22222222-2222-2222-2222-222222222222"
-RES3="$(post_batch "${REQ2}")"
-echo "${RES3}" | jq
-assert_ok "${RES3}"
-CODE3="$(get_code "${RES3}")"
+post_batch "${REQ2}"
+echo "${HTTP_BODY}" | jq
+[[ "${HTTP_STATUS}" == "201" ]]
+assert_ok "${HTTP_BODY}"
+[[ "$(echo "${HTTP_BODY}" | jq -r '.replayed // empty')" == "false" ]]
+CODE3="$(get_code "${HTTP_BODY}")"
 [[ "${CODE3}" =~ ^B-[0-9]{6}-[0-9]{3}$ ]]
-
+[[ "${CODE3}" != "${CODE1}" ]]
 
 echo "[4/5] reject client code"
 REQ3="33333333-3333-3333-3333-333333333333"
-RES4="$(post_batch "${REQ3}" ', "code":"B-000000-999"')"
-echo "${RES4}" | jq
-OK4="$(echo "${RES4}" | jq -r '.ok // empty')"
-ERR4="$(get_error "${RES4}")"
+post_batch "${REQ3}" ', "code":"B-000000-999"'
+echo "${HTTP_BODY}" | jq
+OK4="$(echo "${HTTP_BODY}" | jq -r '.ok // empty')"
+ERR4="$(get_error "${HTTP_BODY}")"
+[[ "${HTTP_STATUS}" == "400" ]]
 [[ "${OK4}" == "false" ]]
 [[ "${ERR4}" == *"code"* ]]
 
@@ -78,14 +94,19 @@ echo "[5/5] concurrency smoke"
 TMP_FILE="$(mktemp)"
 for _ in $(seq 1 10); do
   rid="$(uuidgen | tr '[:upper:]' '[:lower:]')"
-  post_batch "${rid}" >> "${TMP_FILE}" &
+  (
+    post_batch "${rid}"
+    if [[ "${HTTP_STATUS}" == "200" || "${HTTP_STATUS}" == "201" ]]; then
+      echo "${HTTP_BODY}" | jq -c '.'
+    fi
+  ) >> "${TMP_FILE}" &
 done
 wait
 
-jq -r '.data.code // empty' "${TMP_FILE}" | sed '/^$/d' | sort > "${TMP_FILE}.codes"
+jq -r 'select(.ok == true) | .data.code // empty' "${TMP_FILE}" | sed '/^$/d' | sort > "${TMP_FILE}.codes"
 COUNT_TOTAL="$(wc -l < "${TMP_FILE}.codes" | tr -d ' ')"
 COUNT_UNIQ="$(sort -u "${TMP_FILE}.codes" | wc -l | tr -d ' ')"
 [[ "${COUNT_TOTAL}" -eq 10 ]]
 [[ "${COUNT_UNIQ}" -eq 10 ]]
 
-echo "All PR-11 checks passed."
+echo "All PR-12 checks passed."

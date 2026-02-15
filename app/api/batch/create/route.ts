@@ -10,6 +10,7 @@ type BatchCreatePayload = {
 };
 
 type BatchCreateResult = {
+  replayed?: boolean;
   id: string;
   code: string;
   status: string;
@@ -95,7 +96,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: errorMessage }, { status });
     }
 
-    return NextResponse.json({ ok: true, data: gasResponse.data }, { status: 201 });
+    const replayed = gasResponse.data.replayed === true;
+    const { replayed: _replayed, ...data } = gasResponse.data;
+    const status = replayed ? 200 : 201;
+
+    return NextResponse.json({ ok: true, data, replayed }, { status });
   } catch (caughtError) {
     const message = caughtError instanceof Error ? caughtError.message : "Unknown error";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
