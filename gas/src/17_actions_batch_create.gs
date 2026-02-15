@@ -26,6 +26,7 @@
       const existing = findBatchByRequestId_(batchSheet, ctx.requestId);
       if (existing) {
         return {
+          replayed: true,
           id: String(existing.id || ''),
           code: String(existing.code || ''),
           status: String(existing.status || 'created'),
@@ -51,6 +52,7 @@
       appendByHeader_(batchSheet, row);
 
       return {
+        replayed: false,
         id: row.id,
         code: row.code,
         status: row.status,

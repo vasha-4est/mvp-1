@@ -33,7 +33,8 @@ Expected (example):
 ```json
 {
   "ok": true,
-  "data": { "id": "<batch_id>", "code": "B-250215-001", "status": "created", "created_at": "..." }
+  "data": { "id": "<batch_id>", "code": "B-250215-001", "status": "created", "created_at": "..." },
+  "replayed": false
 }
 ```
 
@@ -57,6 +58,8 @@ curl -sS -X POST "https://<YOUR_VERCEL_DOMAIN>/api/batch/create" \
 ```
 
 Expected:
+- HTTP 200
+- JSON contains `replayed: true`
 - same `data.id` and same `data.code`
 - sequences for the day are not incremented
 
