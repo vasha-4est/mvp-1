@@ -53,16 +53,17 @@ echo "${HTTP_BODY}" | jq
 [[ "$(echo "${HTTP_BODY}" | jq -r ' .data.id // empty')" == "${ID}" ]]
 [[ "${HTTP_BODY}" != *"SHEET_DB mapping missing for: batch_registry"* ]]
 
-echo "[4/4] fetch missing code"
-request GET "${BASE_URL}/api/batch/B-000000-999"
+echo "[4/5] fetch missing code"
+request GET "${BASE_URL}/api/batch/B-991231-999"
 echo "${HTTP_BODY}" | jq
 [[ "${HTTP_STATUS}" == "404" ]]
 [[ "$(echo "${HTTP_BODY}" | jq -r '.ok')" == "false" ]]
 ERROR_MESSAGE="$(echo "${HTTP_BODY}" | jq -r '.error // empty')"
 [[ "${ERROR_MESSAGE}" != \{* ]]
-[[ "${ERROR_MESSAGE,,}" == *"not found"* ]]
+[[ "${ERROR_MESSAGE}" == *"Batch not found"* ]]
+[[ "${ERROR_MESSAGE}" != Error:* ]]
 
-echo "[4/4] reject invalid code format"
+echo "[5/5] reject invalid code format"
 request GET "${BASE_URL}/api/batch/NOT-A-CODE"
 echo "${HTTP_BODY}" | jq
 [[ "${HTTP_STATUS}" == "400" ]]

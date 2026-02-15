@@ -27,23 +27,18 @@ function normalizeErrorMessage(value: unknown, fallback: string): string {
 }
 
 function extractCleanError(message: string): string {
-  const trimmed = message.trim();
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-    try {
-      const parsed = JSON.parse(trimmed) as { message?: unknown };
-      if (typeof parsed.message === "string") {
-        return parsed.message;
-      }
-    } catch {
-      return message;
-    }
-  }
+  const firstLine = message.split("\n")[0].trim();
 
-  if (message.includes("NOT_FOUND")) {
+  const withoutErrorPrefix = firstLine.startsWith("Error:")
+    ? firstLine.replace(/^Error:\s*/, "")
+    : firstLine;
+
+  const lower = withoutErrorPrefix.toLowerCase();
+  if (lower.includes("not_found") || lower.includes("not found")) {
     return "Batch not found";
   }
 
-  return message;
+  return withoutErrorPrefix;
 }
 
 function authorizeRequest(request: Request) {
