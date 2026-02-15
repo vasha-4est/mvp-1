@@ -23,6 +23,13 @@ or
 { "ok": false, "error": "..." }
 ```
 
+
+## 0) GAS storage note (PR-13.2)
+
+`batch_fetch` and `batch_list` read directly from `OPS_DB` spreadsheet tab `batch_registry` via `Sys_.ss_(DB.OPS)` + `getSheetByName("batch_registry")`.
+
+This avoids dependency on `SHEET_DB` mapping for `batch_registry`, matching the existing `batch_create` write path.
+
 ## 1) Fetch single batch by code
 
 ```bash
