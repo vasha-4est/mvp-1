@@ -12,6 +12,18 @@
     const payload = ctx.payload || {};
     const note = payload.note === undefined ? '' : String(payload.note);
 
+    const batchSheetPrecheck = ensureBatchRegistrySheet_();
+    const precheckExisting = findBatchByRequestId_(batchSheetPrecheck, ctx.requestId);
+    if (precheckExisting) {
+      return {
+        replayed: true,
+        id: String(precheckExisting.id || ''),
+        code: String(precheckExisting.code || ''),
+        status: String(precheckExisting.status || 'created'),
+        created_at: String(precheckExisting.created_at || ''),
+      };
+    }
+
     const lock = LockService.getScriptLock();
     try {
       lock.waitLock(LOCK_WAIT_MS);
