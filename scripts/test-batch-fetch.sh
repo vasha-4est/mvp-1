@@ -59,4 +59,11 @@ echo "${HTTP_BODY}" | jq
 [[ "${HTTP_STATUS}" == "404" ]]
 [[ "$(echo "${HTTP_BODY}" | jq -r '.ok')" == "false" ]]
 
+
+
+echo "[4/4] reject invalid code format"
+request GET "${BASE_URL}/api/batch/NOT-A-CODE"
+echo "${HTTP_BODY}" | jq
+[[ "${HTTP_STATUS}" == "400" ]]
+[[ "$(echo "${HTTP_BODY}" | jq -r '.ok')" == "false" ]]
 echo "All batch fetch checks passed."

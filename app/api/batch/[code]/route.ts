@@ -61,15 +61,27 @@ export async function GET(request: Request, context: { params: { code: string } 
         "GAS batch_fetch failed"
       );
       const lower = message.toLowerCase();
+      const isLockOrTimeout =
+        lower.includes("lock_conflict") ||
+        lower.includes("lock timeout") ||
+        lower.includes("timeout after") ||
+        lower.includes("timed out");
+
+      if (lower.includes("not_found")) {
+        return NextResponse.json({ ok: false, error: message }, { status: 404 });
+      }
+
       const status =
-        lower.includes("bad_request") || lower.includes("invalid")
-          ? 400
-          : lower.includes("unauthorized")
+        lower.includes("unauthorized") ||
+        lower.includes("forbidden") ||
+        lower.includes("auth mismatch")
           ? 401
-          : lower.includes("forbidden")
-          ? 403
-          : lower.includes("not_found")
-          ? 404
+          : lower.includes("bad_request") ||
+            lower.includes("invalid") ||
+            lower.includes("validation")
+          ? 400
+          : isLockOrTimeout
+          ? 503
           : 502;
 
       return NextResponse.json({ ok: false, error: message }, { status });
