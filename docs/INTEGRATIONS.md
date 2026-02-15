@@ -20,6 +20,7 @@
 ## Environment variables (names only)
 - `NEXT_PUBLIC_APP_URL`
 - `GAS_WEBAPP_URL`
+- `GAS_API_KEY` (server-only)
 - `GOOGLE_SERVICE_ACCOUNT_EMAIL`
 - `GOOGLE_PRIVATE_KEY`
 - `GOOGLE_SHEETS_ID`
@@ -44,6 +45,9 @@ A minimal integration client is available at `lib/integrations/gasClient.ts`.
 ```
 
 `request_id` is required for idempotency.
+
+If `GAS_API_KEY` is set in Next.js environment, the server sends it to GAS in `auth.api_key`.
+Set the same `GAS_API_KEY` value in GAS Script Properties and in Vercel env.
 
 ### Response contract
 

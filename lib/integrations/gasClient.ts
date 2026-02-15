@@ -8,6 +8,7 @@ export async function callGas<T>(
   requestId: string
 ): Promise<GasResponse<T>> {
   const baseUrl = process.env.GAS_WEBAPP_URL;
+  const apiKey = process.env.GAS_API_KEY;
 
   if (!baseUrl) {
     throw new Error("Missing required environment variable: GAS_WEBAPP_URL");
@@ -26,6 +27,7 @@ export async function callGas<T>(
         action,
         payload,
         request_id: requestId,
+        auth: apiKey ? { api_key: apiKey } : undefined,
       }),
       signal: controller.signal,
     });
