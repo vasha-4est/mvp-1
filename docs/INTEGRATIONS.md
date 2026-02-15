@@ -74,14 +74,13 @@ The client normalizes responses to:
 
 ```json
 {
-  "code": "TEST-001",
   "note": "smoke",
   "meta": { "source": "preview" },
   "request_id": "optional-idempotency-key"
 }
 ```
 
-- `code` is required and must be a non-empty string.
+- `code` is **not accepted** from clients; it is generated only in GAS.
 - `note` is optional.
 - `meta` is optional object (forwarded as payload metadata).
 - `request_id` is optional for clients; if omitted, the route generates one.
@@ -94,7 +93,6 @@ Request sent to GAS:
 {
   "action": "batch_create",
   "payload": {
-    "code": "TEST-001",
     "note": "smoke",
     "meta": { "source": "preview" }
   },
@@ -105,7 +103,7 @@ Request sent to GAS:
 Expected GAS response shape:
 
 ```json
-{ "ok": true, "data": { "id": "...", "code": "TEST-001", "status": "created", "created_at": "..." } }
+{ "ok": true, "data": { "id": "...", "code": "B-250215-001", "status": "created", "created_at": "..." } }
 ```
 
 or
