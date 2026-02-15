@@ -43,8 +43,18 @@ echo "${HTTP_BODY}" | jq
 [[ "$(echo "${HTTP_BODY}" | jq -r '.ok')" == "true" ]]
 [[ "$(echo "${HTTP_BODY}" | jq -r '.data.code // empty')" == "${CODE}" ]]
 
-echo "[3/4] fetch missing valid-shaped code"
-request GET "${BASE_URL}/api/batch/B-991231-999"
+echo "[3/4] fetch existing by id"
+ID="$(echo "${HTTP_BODY}" | jq -r ' .data.id // empty')"
+[[ "${ID}" =~ ^batch_[a-z0-9-]+$ ]]
+request GET "${BASE_URL}/api/batch/${ID}"
+echo "${HTTP_BODY}" | jq
+[[ "${HTTP_STATUS}" == "200" ]]
+[[ "$(echo "${HTTP_BODY}" | jq -r ' .ok')" == "true" ]]
+[[ "$(echo "${HTTP_BODY}" | jq -r ' .data.id // empty')" == "${ID}" ]]
+[[ "${HTTP_BODY}" != *"SHEET_DB mapping missing for: batch_registry"* ]]
+
+echo "[4/4] fetch missing code"
+request GET "${BASE_URL}/api/batch/B-000000-999"
 echo "${HTTP_BODY}" | jq
 [[ "${HTTP_STATUS}" == "404" ]]
 [[ "$(echo "${HTTP_BODY}" | jq -r '.ok')" == "false" ]]

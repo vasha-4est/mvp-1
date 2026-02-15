@@ -15,32 +15,44 @@
     const prefixRaw = payload.prefix === undefined ? payload.codePrefix : payload.prefix;
     const prefix = prefixRaw === undefined ? '' : String(prefixRaw).trim();
 
-    let rows = Db_.readAll_(BATCH_REGISTRY_SHEET);
-
-    if (status) {
-      rows = rows.filter((row) => String(row.status || '').trim() === status);
+    const batchRegistry = getBatchRegistrySheet_();
+    if (!batchRegistry) {
+      return {
+        items: [],
+        total: 0,
+      };
     }
 
-    if (prefix) {
-      rows = rows.filter((row) => String(row.code || '').indexOf(prefix) === 0);
-    }
+    const rows = readRowsByHeader_(batchRegistry);
 
-    const items = rows.filter((row) => {
+    const items = [];
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+
+      if (status && String(row.status || '').trim() !== status) {
+        continue;
+      }
+
+      const rowCode = String(row.code || '').trim();
+      if (prefix && rowCode.indexOf(prefix) !== 0) {
+        continue;
+      }
+
       const created = toDateValue_(row.created_at);
       if (!created) {
-        return false;
+        continue;
       }
 
       if (fromDate && created.getTime() < fromDate.getTime()) {
-        return false;
+        continue;
       }
 
       if (toDate && created.getTime() > toDate.getTime()) {
-        return false;
+        continue;
       }
 
-      return true;
-    });
+      items.push(row);
+    }
 
     return {
       items,
@@ -50,13 +62,24 @@
 
   Actions_.register_('batch_fetch', (ctx) => {
     const payload = ctx.payload || {};
-    const code = String(payload.code || '').trim();
+    const identifier = String(payload.code || payload.id || '').trim();
 
-    if (!code) {
+    if (!identifier) {
       throw new Error(ERROR.BAD_REQUEST + ': missing code');
     }
 
-    const row = Db_.query_(BATCH_REGISTRY_SHEET, (item) => String(item.code || '').trim() === code)[0] || null;
+    const batchRegistry = getBatchRegistrySheet_();
+    if (!batchRegistry) {
+      throw new Error(ERROR.NOT_FOUND + ': batch not found');
+    }
+
+    const rows = readRowsByHeader_(batchRegistry);
+    const row = rows.find((item) => {
+      const code = String(item.code || '').trim();
+      const id = String(item.id || '').trim();
+      return code === identifier || id === identifier;
+    }) || null;
+
     if (!row) {
       throw new Error(ERROR.NOT_FOUND + ': batch not found');
     }
@@ -106,6 +129,40 @@
     }
 
     return dt;
+  }
+
+  function getBatchRegistrySheet_() {
+    const ss = Sys_.ss_(DB.OPS);
+    if (!ss) {
+      throw new Error('Spreadsheet not configured for ' + DB.OPS);
+    }
+
+    return ss.getSheetByName(BATCH_REGISTRY_SHEET);
+  }
+
+  function readRowsByHeader_(sh) {
+    const lastRow = sh.getLastRow();
+    const lastCol = sh.getLastColumn();
+    if (lastRow < 1 || lastCol < 1) {
+      return [];
+    }
+
+    const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map((value) => String(value).trim());
+    const rowsCount = lastRow - 1;
+    if (rowsCount <= 0) {
+      return [];
+    }
+
+    const data = sh.getRange(2, 1, rowsCount, lastCol).getValues();
+
+    return data.map((cells) => {
+      const row = {};
+      for (let i = 0; i < header.length; i++) {
+        const key = header[i] || ('col_' + i);
+        row[key] = cells[i];
+      }
+      return row;
+    });
   }
 
 })();
