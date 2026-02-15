@@ -1,142 +1,111 @@
 (function initBatchReadActions_(){
   const BATCH_REGISTRY_SHEET = 'batch_registry';
-  const BATCH_HEADERS = ['id', 'code', 'status', 'created_at', 'request_id', 'note'];
-
-  Actions_.register_('batch_fetch', (ctx) => {
-    const payload = ctx.payload || {};
-    const code = payload.code === undefined ? '' : String(payload.code).trim();
-    const id = payload.id === undefined ? '' : String(payload.id).trim();
-
-    if (!code && !id) {
-      throw new Error(ERROR.BAD_REQUEST + ': batch_fetch requires code or id');
-    }
-
-    const sheet = ensureBatchRegistrySheet_();
-    const header = getHeader_(sheet);
-    const codeIdx = header.indexOf('code');
-    const idIdx = header.indexOf('id');
-
-    if (codeIdx === -1 || idIdx === -1) {
-      throw new Error(ERROR.BAD_REQUEST + ': batch_registry requires id and code columns');
-    }
-
-    const rows = readDataRows_(sheet, header.length);
-    for (let i = 0; i < rows.length; i++) {
-      const rowCode = String(rows[i][codeIdx] || '');
-      const rowId = String(rows[i][idIdx] || '');
-      if ((code && rowCode === code) || (id && rowId === id)) {
-        return toObject_(header, rows[i]);
-      }
-    }
-
-    throw new Error(ERROR.NOT_FOUND + ': batch not found');
-  });
 
   Actions_.register_('batch_list', (ctx) => {
     const payload = ctx.payload || {};
-    const status = payload.status === undefined ? '' : String(payload.status).trim();
-    const prefix = payload.prefix === undefined ? '' : String(payload.prefix).trim();
-    const fromDate = payload.fromDate === undefined ? '' : String(payload.fromDate).trim();
-    const toDate = payload.toDate === undefined ? '' : String(payload.toDate).trim();
 
-    const fromTs = fromDate ? parseDateFilter_(fromDate, 'fromDate', false) : null;
-    const toTs = toDate ? parseDateFilter_(toDate, 'toDate', true) : null;
+    const fromDate = parseDateFilter_(payload.fromDate, 'fromDate', false);
+    const toDate = parseDateFilter_(payload.toDate, 'toDate', true);
 
-    if (fromTs !== null && toTs !== null && fromTs > toTs) {
+    if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
       throw new Error(ERROR.BAD_REQUEST + ': fromDate must be <= toDate');
     }
 
-    const sheet = ensureBatchRegistrySheet_();
-    const header = getHeader_(sheet);
-    const statusIdx = header.indexOf('status');
-    const createdAtIdx = header.indexOf('created_at');
-    const codeIdx = header.indexOf('code');
+    const status = payload.status === undefined ? '' : String(payload.status).trim();
+    const prefixRaw = payload.prefix === undefined ? payload.codePrefix : payload.prefix;
+    const prefix = prefixRaw === undefined ? '' : String(prefixRaw).trim();
 
-    if (statusIdx === -1 || createdAtIdx === -1 || codeIdx === -1) {
-      throw new Error(ERROR.BAD_REQUEST + ': batch_registry requires status, created_at, code columns');
+    let rows = Db_.readAll_(BATCH_REGISTRY_SHEET);
+
+    if (status) {
+      rows = rows.filter((row) => String(row.status || '').trim() === status);
     }
 
-    const rows = readDataRows_(sheet, header.length);
-    const result = [];
-
-    for (let i = 0; i < rows.length; i++) {
-      const rowStatus = String(rows[i][statusIdx] || '');
-      const rowCode = String(rows[i][codeIdx] || '');
-      const createdAtStr = String(rows[i][createdAtIdx] || '').trim();
-      const createdAtTs = createdAtStr ? Date.parse(createdAtStr) : NaN;
-
-      if (status && rowStatus !== status) continue;
-      if (prefix && !rowCode.startsWith(prefix)) continue;
-      if (fromTs !== null) {
-        if (Number.isNaN(createdAtTs) || createdAtTs < fromTs) continue;
-      }
-      if (toTs !== null) {
-        if (Number.isNaN(createdAtTs) || createdAtTs > toTs) continue;
-      }
-
-      result.push(toObject_(header, rows[i]));
+    if (prefix) {
+      rows = rows.filter((row) => String(row.code || '').indexOf(prefix) === 0);
     }
 
-    return result;
+    const items = rows.filter((row) => {
+      const created = toDateValue_(row.created_at);
+      if (!created) {
+        return false;
+      }
+
+      if (fromDate && created.getTime() < fromDate.getTime()) {
+        return false;
+      }
+
+      if (toDate && created.getTime() > toDate.getTime()) {
+        return false;
+      }
+
+      return true;
+    });
+
+    return {
+      items,
+      total: items.length,
+    };
+  });
+
+  Actions_.register_('batch_fetch', (ctx) => {
+    const payload = ctx.payload || {};
+    const code = String(payload.code || '').trim();
+
+    if (!code) {
+      throw new Error(ERROR.BAD_REQUEST + ': missing code');
+    }
+
+    const row = Db_.query_(BATCH_REGISTRY_SHEET, (item) => String(item.code || '').trim() === code)[0] || null;
+    if (!row) {
+      throw new Error(ERROR.NOT_FOUND + ': batch not found');
+    }
+
+    return row;
   });
 
   function parseDateFilter_(raw, field, isEndOfDay) {
-    const parsed = new Date(raw + 'T00:00:00.000Z');
-    if (String(parsed) === 'Invalid Date') {
-      throw new Error(ERROR.BAD_REQUEST + ': invalid ' + field + ' format (expected YYYY-MM-DD)');
+    if (raw === undefined || raw === null || String(raw).trim() === '') {
+      return null;
+    }
+
+    const input = String(raw).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) {
+      throw new Error(ERROR.BAD_REQUEST + ': invalid ' + field + ' value (expected real YYYY-MM-DD date)');
+    }
+
+    const parts = input.split('-');
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+    const day = Number(parts[2]);
+
+    const dt = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+    if (
+      dt.getUTCFullYear() !== year ||
+      dt.getUTCMonth() !== month - 1 ||
+      dt.getUTCDate() !== day
+    ) {
+      throw new Error(ERROR.BAD_REQUEST + ': invalid ' + field + ' value (expected real YYYY-MM-DD date)');
     }
 
     if (isEndOfDay) {
-      parsed.setUTCHours(23, 59, 59, 999);
+      dt.setUTCHours(23, 59, 59, 999);
     }
 
-    return parsed.getTime();
+    return dt;
   }
 
-  function ensureBatchRegistrySheet_() {
-    return ensureSheetWithHeaders_(BATCH_REGISTRY_SHEET, BATCH_HEADERS);
-  }
-
-  function ensureSheetWithHeaders_(sheetName, expectedHeaders) {
-    const ss = Sys_.ss_(DB.OPS);
-    if (!ss) throw new Error('Spreadsheet not configured for ' + DB.OPS);
-
-    let sh = ss.getSheetByName(sheetName);
-    if (!sh) {
-      sh = ss.insertSheet(sheetName);
-      sh.getRange(1, 1, 1, expectedHeaders.length).setValues([expectedHeaders]);
-      return sh;
+  function toDateValue_(value) {
+    if (value === undefined || value === null || String(value).trim() === '') {
+      return null;
     }
 
-    if (sh.getLastRow() === 0) {
-      sh.getRange(1, 1, 1, expectedHeaders.length).setValues([expectedHeaders]);
-      return sh;
+    const dt = new Date(String(value));
+    if (Number.isNaN(dt.getTime())) {
+      return null;
     }
 
-    const header = sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), expectedHeaders.length)).getValues()[0].map(String);
-    const isSameHeader = expectedHeaders.every((name, index) => header[index] === name);
-    if (!isSameHeader) {
-      throw new Error(ERROR.BAD_REQUEST + ': invalid headers in sheet ' + sheetName);
-    }
-
-    return sh;
+    return dt;
   }
 
-  function getHeader_(sh) {
-    return sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
-  }
-
-  function readDataRows_(sh, columnCount) {
-    const lastRow = sh.getLastRow();
-    if (lastRow < 2) return [];
-    return sh.getRange(2, 1, lastRow - 1, columnCount).getValues();
-  }
-
-  function toObject_(header, row) {
-    const out = {};
-    for (let i = 0; i < header.length; i++) {
-      out[header[i]] = row[i];
-    }
-    return out;
-  }
 })();

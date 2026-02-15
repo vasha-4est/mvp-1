@@ -4,106 +4,128 @@ import { NextResponse } from "next/server";
 
 import { callGas } from "../../../lib/integrations/gasClient";
 
-type BatchRow = {
-  id: string;
-  code: string;
-  status: string;
-  created_at: string;
-  request_id?: string;
-  note?: string;
+type BatchListResult = {
+  items?: unknown[];
+  total?: number;
 };
 
-type BatchListFilters = {
-  status?: string;
-  fromDate?: string;
-  toDate?: string;
-  prefix?: string;
-};
-
-const YYYY_MM_DD = /^\d{4}-\d{2}-\d{2}$/;
-
-function normalizeErrorMessage(rawError: unknown, fallback: string): string {
-  if (typeof rawError === "string") return rawError;
-  if (rawError) return JSON.stringify(rawError);
-  return fallback;
-}
-
-function parseDateParam(name: "fromDate" | "toDate", value: string | null): { value?: string; error?: string } {
-  if (!value) return {};
-
-  const trimmed = value.trim();
-  if (!YYYY_MM_DD.test(trimmed)) {
-    return { error: `Invalid '${name}' format. Expected YYYY-MM-DD` };
+function normalizeErrorMessage(value: unknown, fallback: string): string {
+  if (typeof value === "string") {
+    return value;
   }
 
-  const parsed = new Date(`${trimmed}T00:00:00.000Z`);
-  if (Number.isNaN(parsed.getTime())) {
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function parseDateParamStrict(name: "fromDate" | "toDate", value: string | null) {
+  if (value === null || value.trim() === "") {
+    return { value: undefined as string | undefined };
+  }
+
+  const normalized = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
     return { error: `Invalid '${name}' date value` };
   }
 
-  return { value: trimmed };
+  const [yearStr, monthStr, dayStr] = normalized.split("-");
+  const year = Number.parseInt(yearStr, 10);
+  const month = Number.parseInt(monthStr, 10);
+  const day = Number.parseInt(dayStr, 10);
+
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  if (
+    dt.getUTCFullYear() !== year ||
+    dt.getUTCMonth() !== month - 1 ||
+    dt.getUTCDate() !== day
+  ) {
+    return { error: `Invalid '${name}' date value` };
+  }
+
+  return { value: normalized };
 }
 
-function mapErrorToStatus(errorMessage: string): number {
-  const normalized = errorMessage.toLowerCase();
+function authorizeRequest(request: Request) {
+  const requiredKey = process.env.GAS_API_KEY;
+  if (!requiredKey) {
+    return true;
+  }
 
-  if (normalized.includes("bad_request")) return 400;
-  if (normalized.includes("lock_conflict") || normalized.includes("timed out")) return 503;
-
-  return 502;
-}
-
-function isAuthorized(request: Request): boolean {
-  const expectedApiKey = process.env.GAS_API_KEY;
-  if (!expectedApiKey) return true;
-
-  const incomingApiKey = request.headers.get("x-gas-api-key")?.trim();
-  return incomingApiKey === expectedApiKey;
+  const provided = request.headers.get("x-gas-api-key");
+  return provided === requiredKey;
 }
 
 export async function GET(request: Request) {
-  if (!isAuthorized(request)) {
+  if (!authorizeRequest(request)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  const url = new URL(request.url);
+  const { searchParams } = new URL(request.url);
 
-  const status = url.searchParams.get("status")?.trim();
-  const prefix = url.searchParams.get("prefix")?.trim();
-
-  const parsedFrom = parseDateParam("fromDate", url.searchParams.get("fromDate"));
-  if (parsedFrom.error) {
-    return NextResponse.json({ ok: false, error: parsedFrom.error }, { status: 400 });
+  const fromDateResult = parseDateParamStrict("fromDate", searchParams.get("fromDate"));
+  if (fromDateResult.error) {
+    return NextResponse.json({ ok: false, error: fromDateResult.error }, { status: 400 });
   }
 
-  const parsedTo = parseDateParam("toDate", url.searchParams.get("toDate"));
-  if (parsedTo.error) {
-    return NextResponse.json({ ok: false, error: parsedTo.error }, { status: 400 });
+  const toDateResult = parseDateParamStrict("toDate", searchParams.get("toDate"));
+  if (toDateResult.error) {
+    return NextResponse.json({ ok: false, error: toDateResult.error }, { status: 400 });
   }
 
-  if (parsedFrom.value && parsedTo.value && parsedFrom.value > parsedTo.value) {
+  if (fromDateResult.value && toDateResult.value && fromDateResult.value > toDateResult.value) {
     return NextResponse.json(
-      { ok: false, error: "Invalid date range: 'fromDate' must be <= 'toDate'" },
+      { ok: false, error: "Invalid date range: fromDate must be <= toDate" },
       { status: 400 }
     );
   }
 
-  const filters: BatchListFilters = {
-    ...(status ? { status } : {}),
-    ...(parsedFrom.value ? { fromDate: parsedFrom.value } : {}),
-    ...(parsedTo.value ? { toDate: parsedTo.value } : {}),
-    ...(prefix ? { prefix } : {}),
-  };
+  const payload: Record<string, string> = {};
+  searchParams.forEach((value, key) => {
+    if (value.trim() !== "") {
+      payload[key] = value;
+    }
+  });
+
+  if (fromDateResult.value) {
+    payload.fromDate = fromDateResult.value;
+  }
+
+  if (toDateResult.value) {
+    payload.toDate = toDateResult.value;
+  }
+
+  const requestId = randomUUID();
 
   try {
-    const gasResponse = await callGas<BatchRow[]>("batch_list", filters, randomUUID());
+    const gasResponse = await callGas<BatchListResult>("batch_list", payload, requestId);
     if (!gasResponse.ok) {
-      const rawErr: unknown = (gasResponse as unknown as { error?: unknown }).error;
-      const error = normalizeErrorMessage(rawErr, "GAS batch_list failed");
-      return NextResponse.json({ ok: false, error }, { status: mapErrorToStatus(error) });
+      const message = normalizeErrorMessage(
+        (gasResponse as unknown as { error?: unknown }).error,
+        "GAS batch_list failed"
+      );
+      const lower = message.toLowerCase();
+      const status =
+        lower.includes("bad_request") || lower.includes("invalid")
+          ? 400
+          : lower.includes("unauthorized")
+          ? 401
+          : lower.includes("forbidden")
+          ? 403
+          : lower.includes("not_found")
+          ? 404
+          : 502;
+
+      return NextResponse.json({ ok: false, error: message }, { status });
     }
 
-    return NextResponse.json({ ok: true, data: gasResponse.data ?? [] }, { status: 200 });
+    return NextResponse.json({ ok: true, data: gasResponse.data ?? { items: [], total: 0 } });
   } catch (caughtError) {
     const message = caughtError instanceof Error ? caughtError.message : "Unknown error";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
