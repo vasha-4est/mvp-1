@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
  */
 export async function GET() {
   const gasUrl = process.env.GAS_WEBAPP_URL;
+  const gasApiKey = process.env.GAS_API_KEY;
 
   if (!gasUrl) {
     return NextResponse.json({ ok: false, error: "Missing GAS_WEBAPP_URL" }, { status: 500 });
@@ -19,6 +20,7 @@ export async function GET() {
       action: "ping",
       payload: {},
       request_id: "debug-from-server",
+      auth: gasApiKey ? { api_key: gasApiKey } : undefined,
     }),
   });
 
@@ -30,5 +32,7 @@ export async function GET() {
     gas_content_type: response.headers.get("content-type"),
     gas_text_head: rawText.slice(0, 800),
     gas_text_len: rawText.length,
+    has_env_gas_api_key: Boolean(gasApiKey),
+    env_gas_api_key_len: gasApiKey ? gasApiKey.length : 0,
   });
 }
