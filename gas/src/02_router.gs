@@ -32,7 +32,7 @@ function doPost(e) {
     }
 
     // Auth
-    const actor = Auth_.authenticate_(auth, flags);
+    const actor = AuthService_.authenticate_(auth) || Auth_.authenticate_(auth, flags);
     if (!actor) return jsonErr_(ERROR.UNAUTHORIZED, 'Auth failed');
 
     // STOP actions (kill switch)
