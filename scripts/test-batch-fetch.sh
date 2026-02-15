@@ -27,7 +27,7 @@ request() {
   HTTP_BODY="$(echo "${raw}" | sed '$d')"
 }
 
-echo "[1/3] seed batch"
+echo "[1/4] seed batch"
 REQ_ID="fetch-test-$(date +%s)-$$"
 request POST "${BASE_URL}/api/batch/create" "{\"request_id\":\"${REQ_ID}\",\"note\":\"fetch-smoke\"}"
 echo "${HTTP_BODY}" | jq
@@ -36,17 +36,24 @@ echo "${HTTP_BODY}" | jq
 CODE="$(echo "${HTTP_BODY}" | jq -r '.data.code // empty')"
 [[ "${CODE}" =~ ^B-[0-9]{6}-[0-9]{3}$ ]]
 
-echo "[2/3] fetch existing by code"
+echo "[2/4] fetch existing by code"
 request GET "${BASE_URL}/api/batch/${CODE}"
 echo "${HTTP_BODY}" | jq
 [[ "${HTTP_STATUS}" == "200" ]]
 [[ "$(echo "${HTTP_BODY}" | jq -r '.ok')" == "true" ]]
 [[ "$(echo "${HTTP_BODY}" | jq -r '.data.code // empty')" == "${CODE}" ]]
 
-echo "[3/3] fetch missing code"
-request GET "${BASE_URL}/api/batch/B-000000-999"
+echo "[3/4] fetch missing valid-shaped code"
+request GET "${BASE_URL}/api/batch/B-991231-999"
 echo "${HTTP_BODY}" | jq
 [[ "${HTTP_STATUS}" == "404" ]]
 [[ "$(echo "${HTTP_BODY}" | jq -r '.ok')" == "false" ]]
 
+
+
+echo "[4/4] reject invalid code format"
+request GET "${BASE_URL}/api/batch/NOT-A-CODE"
+echo "${HTTP_BODY}" | jq
+[[ "${HTTP_STATUS}" == "400" ]]
+[[ "$(echo "${HTTP_BODY}" | jq -r '.ok')" == "false" ]]
 echo "All batch fetch checks passed."
