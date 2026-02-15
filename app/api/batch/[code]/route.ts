@@ -26,6 +26,26 @@ function normalizeErrorMessage(value: unknown, fallback: string): string {
   }
 }
 
+function extractCleanError(message: string): string {
+  const trimmed = message.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(trimmed) as { message?: unknown };
+      if (typeof parsed.message === "string") {
+        return parsed.message;
+      }
+    } catch {
+      return message;
+    }
+  }
+
+  if (message.includes("NOT_FOUND")) {
+    return "Batch not found";
+  }
+
+  return message;
+}
+
 function authorizeRequest(request: Request) {
   const requiredKey = process.env.GAS_API_KEY;
   if (!requiredKey) {
@@ -68,7 +88,8 @@ export async function GET(request: Request, context: { params: { code: string } 
         lower.includes("timed out");
 
       if (lower.includes("not_found")) {
-        return NextResponse.json({ ok: false, error: message }, { status: 404 });
+        const clean = extractCleanError(message);
+        return NextResponse.json({ ok: false, error: clean }, { status: 404 });
       }
 
       const status =
