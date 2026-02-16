@@ -1,5 +1,14 @@
 import { BatchListFilters, serializeBatchFilters, validateBatchFilters } from "../query/filters";
 
+export type BatchEvent = {
+  event_id?: string;
+  batch_code?: string;
+  type?: string;
+  actor?: string;
+  at?: string;
+  payload?: string;
+};
+
 export type BatchListItem = {
   code?: string;
   status?: string;

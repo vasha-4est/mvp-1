@@ -87,6 +87,22 @@
     return row;
   });
 
+  Actions_.register_('batch_events_list', (ctx) => {
+    const payload = ctx.payload || {};
+    const code = String(payload.code || '').trim();
+
+    if (!code) {
+      throw new Error(ERROR.BAD_REQUEST + ': missing code');
+    }
+
+    if (!/^B-\d{6}-\d{3}$/.test(code) && !/^batch_[a-z0-9-]+$/.test(code)) {
+      throw new Error(ERROR.BAD_REQUEST + ': invalid code');
+    }
+
+    const events = BatchEventsRepo_.listBatchEvents(code);
+    return { events };
+  });
+
   function parseDateFilter_(raw, field, isEndOfDay) {
     if (raw === undefined || raw === null || String(raw).trim() === '') {
       return null;
