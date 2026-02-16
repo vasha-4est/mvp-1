@@ -194,7 +194,8 @@ export async function PATCH(request: Request, context: { params: { code: string 
 
     if (!gasResponse.ok || !gasResponse.data) {
       const parsed = parseErrorPayload((gasResponse as { error?: unknown }).error);
-      const status = statusForErrorCode(parsed.code);
+      const status =
+        parsed.code === "DRYING_NOT_FINISHED" ? 409 : statusForErrorCode(parsed.code);
       return withApiLog(
         {
           ok: false,
