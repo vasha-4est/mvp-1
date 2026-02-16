@@ -1,5 +1,7 @@
 import { headers } from "next/headers";
 
+import BatchActions from "@/components/BatchActions";
+
 type BatchStatus = "created" | "production" | "drying" | "ready" | "closed";
 
 type BatchCardResponse = {
@@ -183,6 +185,8 @@ export default async function BatchCardPage({ params }: { params: { code: string
           ) : null}
         </dl>
       </section>
+
+      <BatchActions code={code} canTransitionTo={transitions} />
 
       <section>
         <h2>Derived</h2>
