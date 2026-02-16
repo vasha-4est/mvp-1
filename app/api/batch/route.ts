@@ -1,8 +1,8 @@
-import { randomUUID } from "crypto";
-
 import { NextResponse } from "next/server";
 
 import { callGas } from "../../../lib/integrations/gasClient";
+import { withApiLog } from "../../../lib/obs/apiLog";
+import { getOrCreateRequestId } from "../../../lib/obs/requestId";
 
 type BatchListResult = {
   items?: unknown[];
@@ -63,26 +63,44 @@ function authorizeRequest(request: Request) {
 }
 
 export async function GET(request: Request) {
+  const startedAt = Date.now();
+  const requestId = getOrCreateRequestId(request);
+  const path = new URL(request.url).pathname;
+  const actor = "service";
+
+  const finalize = (response: NextResponse, code?: string) =>
+    withApiLog(response, {
+      startedAt,
+      requestId,
+      method: request.method,
+      path,
+      actor,
+      ...(code ? { code } : {}),
+    });
+
   if (!authorizeRequest(request)) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    return finalize(NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 }), "UNAUTHORIZED");
   }
 
   const { searchParams } = new URL(request.url);
 
   const fromDateResult = parseDateParamStrict("fromDate", searchParams.get("fromDate"));
   if (fromDateResult.error) {
-    return NextResponse.json({ ok: false, error: fromDateResult.error }, { status: 400 });
+    return finalize(NextResponse.json({ ok: false, error: fromDateResult.error }, { status: 400 }), "BAD_REQUEST");
   }
 
   const toDateResult = parseDateParamStrict("toDate", searchParams.get("toDate"));
   if (toDateResult.error) {
-    return NextResponse.json({ ok: false, error: toDateResult.error }, { status: 400 });
+    return finalize(NextResponse.json({ ok: false, error: toDateResult.error }, { status: 400 }), "BAD_REQUEST");
   }
 
   if (fromDateResult.value && toDateResult.value && fromDateResult.value > toDateResult.value) {
-    return NextResponse.json(
-      { ok: false, error: "Invalid date range: fromDate must be <= toDate" },
-      { status: 400 }
+    return finalize(
+      NextResponse.json(
+        { ok: false, error: "Invalid date range: fromDate must be <= toDate" },
+        { status: 400 }
+      ),
+      "BAD_REQUEST"
     );
   }
 
@@ -101,8 +119,6 @@ export async function GET(request: Request) {
     payload.toDate = toDateResult.value;
   }
 
-  const requestId = randomUUID();
-
   try {
     const gasResponse = await callGas<BatchListResult>("batch_list", payload, requestId);
     if (!gasResponse.ok) {
@@ -118,7 +134,7 @@ export async function GET(request: Request) {
         lower.includes("timed out");
 
       if (lower.includes("not_found")) {
-        return NextResponse.json({ ok: true, data: { items: [], total: 0 } });
+        return finalize(NextResponse.json({ ok: true, data: { items: [], total: 0 } }), "NOT_FOUND");
       }
 
       const status =
@@ -134,12 +150,12 @@ export async function GET(request: Request) {
           ? 503
           : 502;
 
-      return NextResponse.json({ ok: false, error: message }, { status });
+      return finalize(NextResponse.json({ ok: false, error: message }, { status }));
     }
 
-    return NextResponse.json({ ok: true, data: gasResponse.data ?? { items: [], total: 0 } });
+    return finalize(NextResponse.json({ ok: true, data: gasResponse.data ?? { items: [], total: 0 } }));
   } catch (caughtError) {
     const message = caughtError instanceof Error ? caughtError.message : "Unknown error";
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    return finalize(NextResponse.json({ ok: false, error: message }, { status: 500 }));
   }
 }

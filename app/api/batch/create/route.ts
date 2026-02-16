@@ -1,8 +1,8 @@
-import { randomUUID } from "crypto";
-
 import { NextResponse } from "next/server";
 
 import { callGas } from "../../../../lib/integrations/gasClient";
+import { withApiLog } from "../../../../lib/obs/apiLog";
+import { getOrCreateRequestId } from "../../../../lib/obs/requestId";
 
 type BatchCreatePayload = {
   note?: string;
@@ -55,23 +55,37 @@ function validatePayload(body: unknown): { payload?: BatchCreatePayload; error?:
 }
 
 export async function POST(request: Request) {
+  const startedAt = Date.now();
+  let requestId = getOrCreateRequestId(request);
+  const path = new URL(request.url).pathname;
+  const actor = "service";
+
+  const finalize = (response: NextResponse, code?: string) =>
+    withApiLog(response, {
+      startedAt,
+      requestId,
+      method: request.method,
+      path,
+      actor,
+      ...(code ? { code } : {}),
+    });
+
   let body: unknown;
 
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
+    return finalize(NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 }), "BAD_REQUEST");
+  }
+
+  if (isRecord(body) && typeof body.request_id === "string" && body.request_id.trim().length > 0) {
+    requestId = body.request_id.trim();
   }
 
   const { payload, error } = validatePayload(body);
   if (!payload) {
-    return NextResponse.json({ ok: false, error }, { status: 400 });
+    return finalize(NextResponse.json({ ok: false, error }, { status: 400 }), "BAD_REQUEST");
   }
-
-  const requestId =
-    isRecord(body) && typeof body.request_id === "string" && body.request_id.trim().length > 0
-      ? body.request_id.trim()
-      : randomUUID();
 
   try {
     const gasResponse = await callGas<BatchCreateResult>("batch_create", payload, requestId);
@@ -93,16 +107,16 @@ export async function POST(request: Request) {
         lower.includes("timed out");
 
       const status = isLockOrTimeout ? 503 : 502;
-      return NextResponse.json({ ok: false, error: errorMessage }, { status });
+      return finalize(NextResponse.json({ ok: false, error: errorMessage }, { status }));
     }
 
     const replayed = gasResponse.data.replayed === true;
     const { replayed: _replayed, ...data } = gasResponse.data;
     const status = replayed ? 200 : 201;
 
-    return NextResponse.json({ ok: true, data, replayed }, { status });
+    return finalize(NextResponse.json({ ok: true, data, replayed }, { status }));
   } catch (caughtError) {
     const message = caughtError instanceof Error ? caughtError.message : "Unknown error";
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    return finalize(NextResponse.json({ ok: false, error: message }, { status: 500 }));
   }
 }
