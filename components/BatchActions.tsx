@@ -29,6 +29,20 @@ const ACTIONS: Array<{ label: string; toStatus: TransitionStatus }> = [
   { label: "Close batch", toStatus: "closed" },
 ];
 
+function getActionButtonStyle(disabled: boolean): { opacity: number; cursor: "pointer" | "not-allowed" } {
+  if (disabled) {
+    return {
+      opacity: 0.6,
+      cursor: "not-allowed",
+    };
+  }
+
+  return {
+    opacity: 1,
+    cursor: "pointer",
+  };
+}
+
 function createIdempotencyKey(target: TransitionStatus): string {
   return `ui-${target}-${Date.now()}`;
 }
@@ -136,15 +150,16 @@ export default function BatchActions({ code, canTransitionTo, debug = false }: B
         {ACTIONS.map((action) => {
           const allowed = normalizedTransitions[action.toStatus] === true;
           const isActionLoading = loadingStatus === action.toStatus;
+          const isDisabled = isLoading || !allowed;
 
           return (
             <button
               key={action.toStatus}
               type="button"
-              onClick={() => handleTransition(action.toStatus)}
-              disabled={isLoading || !allowed}
+              onClick={isDisabled ? undefined : () => handleTransition(action.toStatus)}
+              disabled={isDisabled}
               aria-busy={isActionLoading}
-              style={{ opacity: !allowed ? 0.6 : 1, cursor: isLoading || !allowed ? "not-allowed" : "pointer" }}
+              style={getActionButtonStyle(isDisabled)}
             >
               {isActionLoading ? `${action.label}...` : action.label}
             </button>
