@@ -1,4 +1,4 @@
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 
 type BatchStatus = "created" | "production" | "drying" | "ready" | "closed";
 
@@ -107,9 +107,13 @@ function parseDetails(details: unknown): string {
 
 export default async function BatchCardPage({ params }: { params: { code: string } }) {
   const code = decodeURIComponent(params.code);
+  const cookieHeader = cookies().toString();
   const response = await fetch(`${getBaseUrl()}/api/batch/${encodeURIComponent(code)}/card`, {
     method: "GET",
     cache: "no-store",
+    headers: {
+      cookie: cookieHeader,
+    },
   });
 
   let payload: BatchCardResponse | null = null;
