@@ -6,9 +6,11 @@ import { callGas } from "@/lib/integrations/gasClient";
 const BATCH_CODE_PATTERNS = [/^B-\d{6}-\d{3}$/, /^batch_[a-z0-9-]+$/];
 
 type BatchEventsResult = {
-  batch_code: string;
-  events: unknown[];
+  batch_code?: string;
+  events?: unknown[];
 };
+
+type EventsRouteContext = { params: { code: string } };
 
 function getOrCreateRequestId(request: Request): string {
   const existing = request.headers.get("x-request-id");
@@ -36,7 +38,7 @@ function isValidBatchCode(value: string): boolean {
   return BATCH_CODE_PATTERNS.some((pattern) => pattern.test(value));
 }
 
-export async function GET(request: Request, context: { params: { code: string } }) {
+export async function GET(request: Request, context: EventsRouteContext) {
   const requestId = getOrCreateRequestId(request);
   const code = String(context.params.code || "").trim();
 
@@ -57,6 +59,7 @@ export async function GET(request: Request, context: { params: { code: string } 
 
     if (!gasResponse.ok || !gasResponse.data) {
       const parsed = parseErrorPayload((gasResponse as { error?: unknown }).error);
+
       return json(
         requestId,
         {
@@ -74,7 +77,7 @@ export async function GET(request: Request, context: { params: { code: string } 
       {
         ok: true,
         data: {
-          batch_code: code,
+          batch_code: String(gasResponse.data.batch_code || code),
           events: Array.isArray(gasResponse.data.events) ? gasResponse.data.events : [],
         },
       },
