@@ -24,8 +24,6 @@
     if (precheckReplay) {
       if (String(precheckReplay.to_status) !== toStatus) {
         throw conflictError_('IDEMPOTENCY_KEY_REUSE', 'Idempotency key already used with a different to_status', {
-          batch_code: code,
-          idempotency_key: idempotencyKey,
           existing_to_status: String(precheckReplay.to_status || ''),
           requested_to_status: toStatus,
         });
@@ -54,8 +52,6 @@
       if (replayInsideLock) {
         if (String(replayInsideLock.to_status) !== toStatus) {
           throw conflictError_('IDEMPOTENCY_KEY_REUSE', 'Idempotency key already used with a different to_status', {
-            batch_code: code,
-            idempotency_key: idempotencyKey,
             existing_to_status: String(replayInsideLock.to_status || ''),
             requested_to_status: toStatus,
           });

@@ -106,13 +106,16 @@ function statusForErrorCode(code: string): number {
   if (code === "UNAUTHORIZED") return 401;
   if (code === "NOT_FOUND") return 404;
   if (code === "VALIDATION_ERROR" || code === "BAD_REQUEST") return 400;
+
+  // Transition conflicts must stay at HTTP 409.
   if (
-    code === "ILLEGAL_TRANSITION" ||
     code === "DRYING_NOT_FINISHED" ||
+    code === "ILLEGAL_TRANSITION" ||
     code === "IDEMPOTENCY_KEY_REUSE"
   ) {
     return 409;
   }
+
   if (code === "LOCK_TIMEOUT" || code === "LOCK_CONFLICT") return 503;
   return 502;
 }
@@ -194,8 +197,6 @@ export async function PATCH(request: Request, context: { params: { code: string 
 
     if (!gasResponse.ok || !gasResponse.data) {
       const parsed = parseErrorPayload((gasResponse as { error?: unknown }).error);
-      const status =
-        parsed.code === "DRYING_NOT_FINISHED" ? 409 : statusForErrorCode(parsed.code);
       return withApiLog(
         {
           ok: false,
@@ -203,7 +204,7 @@ export async function PATCH(request: Request, context: { params: { code: string 
           code: parsed.code,
           ...(parsed.details ? { details: parsed.details } : {}),
         },
-        status,
+        statusForErrorCode(parsed.code),
         requestId
       );
     }
