@@ -153,6 +153,7 @@ function parseErrorFromMessage_(message) {
     DRYING_NOT_FINISHED: true,
     ILLEGAL_TRANSITION: true,
     IDEMPOTENCY_KEY_REUSE: true,
+    NOT_FOUND: true,
   };
 
   if (match && passthroughCodes[match[1]] === true) {
