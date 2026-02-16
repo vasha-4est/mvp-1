@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { BatchListItem } from "../../lib/api/batch";
 
 type BatchListProps = {
@@ -53,7 +55,9 @@ export function BatchList({ items, error, validationError, filters }: BatchListP
           <tbody>
             {items.map((item, index) => (
               <tr key={`${item.code ?? "batch"}-${index}`}>
-                <td>{item.code ?? "—"}</td>
+                <td>
+                  {item.code ? <Link href={`/batches/${item.code}`}>{item.code}</Link> : "—"}
+                </td>
                 <td>{item.status ?? "—"}</td>
                 <td>{item.created_at ?? "—"}</td>
                 <td>{item.dry_end_at ?? "—"}</td>
