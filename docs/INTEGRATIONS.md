@@ -151,6 +151,13 @@ or
 - `200` + `{ ok: true, data: [ ... ] }` when matches exist.
 - `400` + `{ ok: false, error }` for invalid date formats/ranges.
 
+
+### Preview environment checklist (for `/batches`)
+- If `/batches` shows `Unauthorized`/`401` or runtime GAS config errors, verify **Preview** env has:
+  - `GAS_API_KEY`
+  - `GAS_WEBAPP_URL`
+- In Vercel, ensure these variables are assigned to the **Preview** environment (they may not always be inherited as expected).
+
 ## Health Endpoint
 
 - `GET /api/gas/health`
