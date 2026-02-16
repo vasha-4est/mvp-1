@@ -43,14 +43,8 @@ function isValidBatchCode(value: string): boolean {
   return BATCH_CODE_PATTERNS.some((pattern) => pattern.test(value));
 }
 
-function authorizeRequest(request: Request) {
-  const requiredKey = process.env.GAS_API_KEY;
-  if (!requiredKey) {
-    return true;
-  }
-
-  const provided = request.headers.get("x-gas-api-key");
-  return provided === requiredKey;
+function authorizeRequest() {
+  return true;
 }
 
 function parseErrorPayload(rawError: unknown): {
@@ -165,7 +159,7 @@ function validateRequest(
 export async function PATCH(request: Request, context: { params: { code: string } }) {
   const requestId = getOrCreateRequestId(request);
 
-  if (!authorizeRequest(request)) {
+  if (!authorizeRequest()) {
     return withApiLog({ ok: false, error: "Unauthorized", code: "UNAUTHORIZED" }, 401, requestId);
   }
 
