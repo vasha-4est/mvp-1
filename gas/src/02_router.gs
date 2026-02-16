@@ -102,13 +102,14 @@ function doPost(e) {
     });
   } catch (err) {
     const message = String(err && err.message ? err.message : err);
-    return finalizeGas_(jsonErr_(ERROR.BAD_REQUEST, message), {
+    const parsed = parseErrorFromMessage_(message);
+    return finalizeGas_(jsonErr_(parsed.code, parsed.message), {
       startedAtMs,
       requestId,
       action: action || 'unknown',
       ok: false,
-      errorCode: ERROR.BAD_REQUEST,
-      error: message,
+      errorCode: parsed.code,
+      error: parsed.message,
     });
   }
 }
@@ -143,4 +144,20 @@ function finalizeGas_(response, meta) {
   });
 
   return response;
+}
+
+function parseErrorFromMessage_(message) {
+  const clean = String(message || '').trim();
+  const match = clean.match(/^([A-Z_]+)\s*:\s*(.+)$/);
+  if (match && match[1] === 'DRYING_NOT_FINISHED') {
+    return {
+      code: match[1],
+      message: match[2],
+    };
+  }
+
+  return {
+    code: ERROR.BAD_REQUEST,
+    message: clean,
+  };
 }
