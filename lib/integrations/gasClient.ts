@@ -22,6 +22,7 @@ export async function callGas<T>(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "x-request-id": requestId,
       },
       body: JSON.stringify({
         action,

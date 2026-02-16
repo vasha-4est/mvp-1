@@ -1,8 +1,8 @@
-import { randomUUID } from "crypto";
-
 import { NextResponse } from "next/server";
 
 import { callGas } from "../../../../lib/integrations/gasClient";
+import { withApiLog } from "../../../../lib/obs/apiLog";
+import { getOrCreateRequestId } from "../../../../lib/obs/requestId";
 
 const BATCH_CODE_PATTERNS = [/^B-\d{6}-\d{3}$/, /^batch_[a-z0-9-]+$/];
 
@@ -52,24 +52,42 @@ function authorizeRequest(request: Request) {
 }
 
 export async function GET(request: Request, context: { params: { code: string } }) {
+  const startedAt = Date.now();
+  const requestId = getOrCreateRequestId(request);
+  const path = new URL(request.url).pathname;
+  const actor = "service";
+
+  const finalize = (response: NextResponse, code?: string) =>
+    withApiLog(response, {
+      startedAt,
+      requestId,
+      method: request.method,
+      path,
+      actor,
+      ...(code ? { code } : {}),
+    });
+
   if (!authorizeRequest(request)) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    return finalize(NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 }), "UNAUTHORIZED");
   }
 
   const code = String(context.params.code || "").trim();
 
   if (!isValidBatchCode(code)) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "Invalid 'code' value (expected B-YYMMDD-NNN or batch_<slug>)",
-      },
-      { status: 400 }
+    return finalize(
+      NextResponse.json(
+        {
+          ok: false,
+          error: "Invalid 'code' value (expected B-YYMMDD-NNN or batch_<slug>)",
+        },
+        { status: 400 }
+      ),
+      "BAD_REQUEST"
     );
   }
 
   try {
-    const gasResponse = await callGas("batch_fetch", { code }, randomUUID());
+    const gasResponse = await callGas("batch_fetch", { code }, requestId);
     if (!gasResponse.ok) {
       const message = normalizeErrorMessage(
         (gasResponse as unknown as { error?: unknown }).error,
@@ -84,7 +102,7 @@ export async function GET(request: Request, context: { params: { code: string } 
 
       if (lower.includes("not_found")) {
         const clean = extractCleanError(message);
-        return NextResponse.json({ ok: false, error: clean }, { status: 404 });
+        return finalize(NextResponse.json({ ok: false, error: clean }, { status: 404 }), "NOT_FOUND");
       }
 
       const status =
@@ -100,12 +118,12 @@ export async function GET(request: Request, context: { params: { code: string } 
           ? 503
           : 502;
 
-      return NextResponse.json({ ok: false, error: message }, { status });
+      return finalize(NextResponse.json({ ok: false, error: message }, { status }));
     }
 
-    return NextResponse.json({ ok: true, data: gasResponse.data ?? null });
+    return finalize(NextResponse.json({ ok: true, data: gasResponse.data ?? null }));
   } catch (caughtError) {
     const message = caughtError instanceof Error ? caughtError.message : "Unknown error";
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    return finalize(NextResponse.json({ ok: false, error: message }, { status: 500 }));
   }
 }
