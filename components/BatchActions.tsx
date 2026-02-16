@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type TransitionStatus = "production" | "drying" | "ready" | "closed";
 
@@ -29,6 +29,20 @@ const ACTIONS: Array<{ label: string; toStatus: TransitionStatus }> = [
   { label: "Close batch", toStatus: "closed" },
 ];
 
+function getActionButtonStyle(disabled: boolean): { opacity: number; cursor: "pointer" | "not-allowed" } {
+  if (disabled) {
+    return {
+      opacity: 0.6,
+      cursor: "not-allowed",
+    };
+  }
+
+  return {
+    opacity: 1,
+    cursor: "pointer",
+  };
+}
+
 function createIdempotencyKey(target: TransitionStatus): string {
   return `ui-${target}-${Date.now()}`;
 }
@@ -54,6 +68,7 @@ export default function BatchActions({ code, canTransitionTo, debug = false }: B
   const [loadingStatus, setLoadingStatus] = useState<TransitionStatus | null>(null);
   const [error, setError] = useState<ActionError | null>(null);
   const [success, setSuccess] = useState<ActionSuccess | null>(null);
+  const requestInFlightRef = useRef(false);
 
   const isLoading = loadingStatus !== null;
   const normalizedTransitions = useMemo(() => canTransitionTo ?? {}, [canTransitionTo]);
@@ -67,6 +82,11 @@ export default function BatchActions({ code, canTransitionTo, debug = false }: B
   }, [code, debug]);
 
   async function handleTransition(toStatus: TransitionStatus) {
+    if (requestInFlightRef.current) {
+      return;
+    }
+
+    requestInFlightRef.current = true;
     setError(null);
     setSuccess(null);
     setLoadingStatus(toStatus);
@@ -93,31 +113,11 @@ export default function BatchActions({ code, canTransitionTo, debug = false }: B
 
       const failed = !response.ok || payload?.ok === false;
       if (failed) {
+        const errorMessage = getMessage(payload?.error);
         setError({
           code: payload?.code ?? `HTTP_${response.status}`,
-          message: getMessage(payload?.error),
+          message: errorMessage || "Transition failed",
           requestId,
-        });
-        return;
-      }
-
-      const cardResponse = await fetch(`/api/batch/${encodeURIComponent(code)}/card`, {
-        cache: "no-store",
-      });
-
-      if (debug) {
-        console.info(`[BatchCard debug] read endpoint: /api/batch/${encodeURIComponent(code)}/card (status ${cardResponse.status})`);
-      }
-
-      if (!cardResponse.ok) {
-        const cardPayload = (await cardResponse.json().catch(() => null)) as
-          | { ok?: boolean; code?: string; error?: unknown }
-          | null;
-
-        setError({
-          code: cardPayload?.code ?? `HTTP_${cardResponse.status}`,
-          message: getMessage(cardPayload?.error) || "Failed to refresh batch card",
-          requestId: cardResponse.headers.get("x-request-id") ?? requestId,
         });
         return;
       }
@@ -131,6 +131,7 @@ export default function BatchActions({ code, canTransitionTo, debug = false }: B
         requestId,
       });
     } finally {
+      requestInFlightRef.current = false;
       setLoadingStatus(null);
     }
   }
@@ -139,11 +140,38 @@ export default function BatchActions({ code, canTransitionTo, debug = false }: B
     <section>
       <h2>Actions</h2>
 
+      {success ? (
+        <p style={{ marginTop: 0, color: "#166534" }}>
+          Updated to <strong>{success.status}</strong>. <small>{`request_id: ${success.requestId}`}</small>
+        </p>
+      ) : null}
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {ACTIONS.map((action) => {
+          const allowed = normalizedTransitions[action.toStatus] === true;
+          const isActionLoading = loadingStatus === action.toStatus;
+          const isDisabled = isLoading || !allowed;
+
+          return (
+            <button
+              key={action.toStatus}
+              type="button"
+              onClick={isDisabled ? undefined : () => handleTransition(action.toStatus)}
+              disabled={isDisabled}
+              aria-busy={isActionLoading}
+              style={getActionButtonStyle(isDisabled)}
+            >
+              {isActionLoading ? `${action.label}...` : action.label}
+            </button>
+          );
+        })}
+      </div>
+
       {error ? (
         <div
           role="alert"
           style={{
-            marginBottom: 12,
+            marginTop: 12,
             border: "1px solid #dc2626",
             color: "#991b1b",
             background: "#fef2f2",
@@ -154,29 +182,6 @@ export default function BatchActions({ code, canTransitionTo, debug = false }: B
           <small>{`request_id: ${error.requestId}`}</small>
         </div>
       ) : null}
-
-      {success ? (
-        <p style={{ marginTop: 0, color: "#166534" }}>
-          Updated to <strong>{success.status}</strong>. <small>{`request_id: ${success.requestId}`}</small>
-        </p>
-      ) : null}
-
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {ACTIONS.map((action) => {
-          const allowed = Boolean(normalizedTransitions[action.toStatus]);
-          return (
-            <button
-              key={action.toStatus}
-              type="button"
-              onClick={() => handleTransition(action.toStatus)}
-              disabled={isLoading || !allowed}
-              aria-busy={loadingStatus === action.toStatus}
-            >
-              {loadingStatus === action.toStatus ? "Updating..." : action.label}
-            </button>
-          );
-        })}
-      </div>
     </section>
   );
 }
