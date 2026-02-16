@@ -1,20 +1,21 @@
 /**
- * @typedef {'CREATE'|'STATUS_CHANGE'|'DRY_END_SET'|'CUSTOM'} BatchEventType
+ * @typedef {'batch_created'|'batch_status_changed'|'dry_end_at_set'|'custom'} BatchEventType
  */
 
 /**
  * @typedef {Object} BatchEvent
- * @property {string} event_id
+ * @property {string} at
  * @property {string} batch_code
+ * @property {string} batch_id
  * @property {BatchEventType} type
  * @property {string} actor
- * @property {string} at
- * @property {string} payload
+ * @property {string} request_id
+ * @property {string} details_json
  */
 
 const BATCH_EVENT_TYPE = {
-  CREATE: 'CREATE',
-  STATUS_CHANGE: 'STATUS_CHANGE',
-  DRY_END_SET: 'DRY_END_SET',
-  CUSTOM: 'CUSTOM',
+  CREATE: 'batch_created',
+  STATUS_CHANGE: 'batch_status_changed',
+  DRY_END_SET: 'dry_end_at_set',
+  CUSTOM: 'custom',
 };

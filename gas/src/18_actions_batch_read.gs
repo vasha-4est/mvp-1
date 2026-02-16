@@ -121,19 +121,19 @@
     const at = String(row.at || '').trim();
     const type = String(row.type || '').trim();
     const actorRaw = String(row.actor || '').trim();
-    const payloadRaw = String(row.payload || '').trim();
+    const detailsRaw = String(row.details_json || '').trim();
 
     let details = undefined;
-    if (payloadRaw) {
+    if (detailsRaw) {
       try {
-        details = JSON.parse(payloadRaw);
+        details = JSON.parse(detailsRaw);
       } catch (error) {
-        details = payloadRaw;
+        details = detailsRaw;
       }
     }
 
     return {
-      ...row,
+      batch_code: String(row.batch_code || '').trim(),
       at,
       type,
       ...(actorRaw ? { actor: actorRaw } : {}),

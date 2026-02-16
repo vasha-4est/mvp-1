@@ -87,6 +87,7 @@
       }
 
       const now = new Date();
+      const changedAt = now.toISOString();
       let nextDryEndAt = String(row.dry_end_at || '').trim();
 
       if (toStatus === 'ready') {
@@ -116,6 +117,27 @@
       upsertIdempotencyRecord_(code, idempotencyKey, toStatus, toStatus, nowIso_());
 
       const updatedBatch = rowFromValues_(header, nextRow);
+
+      if (!Events_.exists_(ctx.requestId, 'batch_status_changed')) {
+        const details = {
+          from: currentStatus,
+          to: toStatus,
+        };
+        if (toStatus === 'drying' && nextDryEndAt) {
+          details.dry_end_at = nextDryEndAt;
+        }
+
+        Events_.append_({
+          at: changedAt,
+          batch_code: String(updatedBatch.code || code),
+          batch_id: String(updatedBatch.id || ''),
+          type: 'batch_status_changed',
+          actor: ctx && ctx.actor && ctx.actor.employee_id ? String(ctx.actor.employee_id) : '',
+          request_id: ctx.requestId,
+          details,
+        });
+      }
+
       return {
         batch: updatedBatch,
         replayed: false,

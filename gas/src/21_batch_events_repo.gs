@@ -1,7 +1,7 @@
 /** batch_events repository (OPS_DB / append-only). */
 
 const BatchEventsRepo_ = (() => {
-  const HEADERS = ['event_id', 'batch_code', 'type', 'actor', 'at', 'payload'];
+  const HEADERS = ['at', 'batch_code', 'batch_id', 'type', 'actor', 'request_id', 'details_json'];
 
   /**
    * @param {BatchEvent} event
@@ -11,18 +11,18 @@ const BatchEventsRepo_ = (() => {
     const sh = ensureBatchEventsSheet_();
 
     const row = {
-      event_id: String(event && event.event_id ? event.event_id : ''),
+      at: String(event && event.at ? event.at : nowIso_()),
       batch_code: String(event && event.batch_code ? event.batch_code : ''),
+      batch_id: String(event && event.batch_id ? event.batch_id : ''),
       type: String(event && event.type ? event.type : ''),
       actor: String(event && event.actor ? event.actor : ''),
-      at: String(event && event.at ? event.at : ''),
-      payload: String(event && event.payload ? event.payload : '{}'),
+      request_id: String(event && event.request_id ? event.request_id : ''),
+      details_json: String(event && event.details_json ? event.details_json : ''),
     };
 
-    if (!row.event_id) throw new Error(ERROR.BAD_REQUEST + ': event_id is required');
     if (!row.batch_code) throw new Error(ERROR.BAD_REQUEST + ': batch_code is required');
     if (!row.type) throw new Error(ERROR.BAD_REQUEST + ': type is required');
-    if (!row.at) throw new Error(ERROR.BAD_REQUEST + ': at is required');
+    if (!row.request_id) throw new Error(ERROR.BAD_REQUEST + ': request_id is required');
 
     appendByHeader_(sh, row);
     return row;
