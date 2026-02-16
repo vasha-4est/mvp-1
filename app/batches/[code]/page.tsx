@@ -34,18 +34,17 @@ type BatchCardResponse = {
   code?: string;
 };
 
-function getBaseUrl(): string {
-  const headerStore = headers();
-  const host = headerStore.get("x-forwarded-host") ?? headerStore.get("host");
-  const protocol = headerStore.get("x-forwarded-proto") ?? "http";
+function getOrigin(): string {
+  const h = headers();
+  const protocol = h.get("x-forwarded-proto") ?? "https";
+  const host = h.get("x-forwarded-host") ?? h.get("host");
 
-  if (host) {
-    return `${protocol}://${host}`;
+  if (!host) {
+    return process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   }
 
-  return process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  return `${protocol}://${host}`;
 }
-
 function formatDryRemaining(ms: number | null | undefined): string {
   if (typeof ms !== "number" || ms < 0) {
     return "—";
@@ -109,24 +108,29 @@ function parseDetails(details: unknown): string {
 
 export default async function BatchCardPage({ params }: { params: { code: string } }) {
   const code = decodeURIComponent(params.code);
-  const response = await fetch(`${getBaseUrl()}/api/batch/${encodeURIComponent(code)}/card`, {
-    method: "GET",
+  const response = await fetch(`${getOrigin()}/api/batch/${encodeURIComponent(code)}/card`, {
     cache: "no-store",
   });
 
+  const requestId = response.headers.get("x-request-id") ?? "n/a";
   let payload: BatchCardResponse | null = null;
+
   try {
     payload = (await response.json()) as BatchCardResponse;
   } catch {
+    const bodyText = await response.text().catch(() => "");
+    const parseErrorCode = `INVALID_JSON_HTTP_${response.status}`;
+
     return (
       <main>
         <h1>Batch {code}</h1>
-        <p role="alert">Unable to parse server response.</p>
+        <p role="alert">{`Error: ${parseErrorCode} — Unable to parse JSON response`}</p>
+        <pre style={{ whiteSpace: "pre-wrap" }}>{bodyText.slice(0, 500) || "(empty response body)"}</pre>
+        <small style={{ color: "#6b7280" }}>request id: {requestId}</small>
       </main>
     );
   }
 
-  const requestId = response.headers.get("x-request-id") ?? "n/a";
   const isError = !response.ok || payload?.ok === false;
 
   if (isError) {
