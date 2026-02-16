@@ -10,12 +10,13 @@ const Audit_ = (() => {
    */
   function recordEvent(batchCode, type, payload, actor) {
     const event = {
-      event_id: uuid_(),
+      at: nowIso_(),
       batch_code: String(batchCode || ''),
+      batch_id: '',
       type: String(type || BATCH_EVENT_TYPE.CUSTOM),
       actor: actor ? String(actor) : '',
-      at: nowIso_(),
-      payload: JSON.stringify(payload || {}),
+      request_id: uuid_(),
+      details_json: JSON.stringify(payload || {}),
     };
 
     if (!event.batch_code) {
@@ -38,12 +39,12 @@ function testRecordBatchEvents_() {
   const changed = Audit_.recordEvent('B-TEST', BATCH_EVENT_TYPE.STATUS_CHANGE, { from: 'created', to: 'drying' });
 
   const events = BatchEventsRepo_.listBatchEvents('B-TEST');
-  const hasCreate = events.some((event) => String(event.event_id || '') === String(created.event_id));
-  const hasStatusChange = events.some((event) => String(event.event_id || '') === String(changed.event_id));
+  const hasCreate = events.some((event) => String(event.request_id || '') === String(created.request_id));
+  const hasStatusChange = events.some((event) => String(event.request_id || '') === String(changed.request_id));
   const validIso = events.every((event) => /^\d{4}-\d{2}-\d{2}T/.test(String(event.at || '')));
 
   return {
-    inserted_event_ids: [created.event_id, changed.event_id],
+    inserted_request_ids: [created.request_id, changed.request_id],
     found_inserted_events: hasCreate && hasStatusChange,
     total_events_for_batch: events.length,
     timestamps_look_iso: validIso,

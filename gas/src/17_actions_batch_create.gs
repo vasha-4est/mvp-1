@@ -63,6 +63,17 @@
 
       appendByHeader_(batchSheet, row);
 
+      if (!Events_.exists_(ctx.requestId, 'batch_created')) {
+        Events_.append_({
+          at: row.created_at,
+          batch_code: row.code,
+          batch_id: row.id,
+          type: 'batch_created',
+          actor: ctx && ctx.actor && ctx.actor.employee_id ? String(ctx.actor.employee_id) : '',
+          request_id: ctx.requestId,
+        });
+      }
+
       return {
         replayed: false,
         id: row.id,
