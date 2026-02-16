@@ -1,4 +1,6 @@
-import { cookies, headers } from "next/headers";
+import { headers } from "next/headers";
+
+import BatchActions from "@/components/BatchActions";
 
 type BatchStatus = "created" | "production" | "drying" | "ready" | "closed";
 
@@ -32,16 +34,23 @@ type BatchCardResponse = {
   code?: string;
 };
 
-function getBaseUrl(): string {
-  const headerStore = headers();
-  const host = headerStore.get("x-forwarded-host") ?? headerStore.get("host");
-  const protocol = headerStore.get("x-forwarded-proto") ?? "http";
+function getRequestContext(): { origin: string; cookieHeader: string } {
+  const h = headers();
+  const protocol = h.get("x-forwarded-proto") ?? "https";
+  const host = h.get("x-forwarded-host") ?? h.get("host");
+  const cookieHeader = h.get("cookie") ?? "";
 
-  if (host) {
-    return `${protocol}://${host}`;
+  if (!host) {
+    return {
+      origin: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
+      cookieHeader,
+    };
   }
 
-  return process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  return {
+    origin: `${protocol}://${host}`,
+    cookieHeader,
+  };
 }
 
 function formatDryRemaining(ms: number | null | undefined): string {
@@ -105,30 +114,39 @@ function parseDetails(details: unknown): string {
   }
 }
 
-export default async function BatchCardPage({ params }: { params: { code: string } }) {
+export default async function BatchCardPage({
+  params,
+  searchParams,
+}: {
+  params: { code: string };
+  searchParams?: { debug?: string };
+}) {
   const code = decodeURIComponent(params.code);
-  const cookieHeader = cookies().toString();
-  const response = await fetch(`${getBaseUrl()}/api/batch/${encodeURIComponent(code)}/card`, {
-    method: "GET",
+  const { origin, cookieHeader } = getRequestContext();
+  const response = await fetch(`${origin}/api/batch/${encodeURIComponent(code)}/card`, {
     cache: "no-store",
-    headers: {
-      cookie: cookieHeader,
-    },
+    headers: cookieHeader ? { cookie: cookieHeader } : undefined,
   });
 
+  const requestId = response.headers.get("x-request-id") ?? "n/a";
   let payload: BatchCardResponse | null = null;
+
   try {
     payload = (await response.json()) as BatchCardResponse;
   } catch {
+    const bodyText = await response.text().catch(() => "");
+    const parseErrorCode = `INVALID_JSON_HTTP_${response.status}`;
+
     return (
       <main>
         <h1>Batch {code}</h1>
-        <p role="alert">Unable to parse server response.</p>
+        <p role="alert">{`Error: ${parseErrorCode} — Unable to parse JSON response`}</p>
+        <pre style={{ whiteSpace: "pre-wrap" }}>{bodyText.slice(0, 500) || "(empty response body)"}</pre>
+        <small style={{ color: "#6b7280" }}>request id: {requestId}</small>
       </main>
     );
   }
 
-  const requestId = response.headers.get("x-request-id") ?? "n/a";
   const isError = !response.ok || payload?.ok === false;
 
   if (isError) {
@@ -151,6 +169,7 @@ export default async function BatchCardPage({ params }: { params: { code: string
   const dryEndAt = derived.dry_end_at ?? batch.dry_end_at;
   const note = typeof batch.note === "string" ? batch.note.trim() : "";
   const transitions = derived.can_transition_to ?? {};
+  const debug = searchParams?.debug === "1";
 
   return (
     <main style={{ display: "grid", gap: 16 }}>
@@ -187,6 +206,8 @@ export default async function BatchCardPage({ params }: { params: { code: string
           ) : null}
         </dl>
       </section>
+
+      <BatchActions code={code} canTransitionTo={transitions} debug={debug} />
 
       <section>
         <h2>Derived</h2>
