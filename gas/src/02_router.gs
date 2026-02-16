@@ -149,7 +149,13 @@ function finalizeGas_(response, meta) {
 function parseErrorFromMessage_(message) {
   const clean = String(message || '').trim();
   const match = clean.match(/^([A-Z_]+)\s*:\s*(.+)$/);
-  if (match && match[1] === 'DRYING_NOT_FINISHED') {
+  const passthroughCodes = {
+    DRYING_NOT_FINISHED: true,
+    ILLEGAL_TRANSITION: true,
+    IDEMPOTENCY_KEY_REUSE: true,
+  };
+
+  if (match && passthroughCodes[match[1]] === true) {
     return {
       code: match[1],
       message: match[2],
