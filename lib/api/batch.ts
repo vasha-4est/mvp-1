@@ -7,6 +7,15 @@ export type BatchListItem = {
   dry_end_at?: string;
 };
 
+export type BatchEvent = {
+  event_id?: string;
+  batch_code?: string;
+  type?: string;
+  actor?: string;
+  at?: string;
+  payload?: string;
+};
+
 type ApiEnvelope = {
   ok?: boolean;
   data?: unknown;
