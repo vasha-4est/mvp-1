@@ -41,6 +41,7 @@ const SHEET = {
   EVENTS: 'events_log',
   IDEMP: 'idempotency_log',
   OUTBOX: 'notification_outbox',
+  BATCH_EVENTS: 'batch_events',
 };
 
 // --- Where each sheet lives
@@ -73,6 +74,7 @@ const SHEET_DB = {
   [SHEET.EVENTS]: DB.OPS,
   [SHEET.IDEMP]: DB.OPS,
   [SHEET.OUTBOX]: DB.OPS,
+  [SHEET.BATCH_EVENTS]: DB.OPS,
 };
 
 // --- Feature flags
