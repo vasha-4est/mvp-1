@@ -30,6 +30,7 @@ type BatchCardResponse = {
   };
   error?: unknown;
   code?: string;
+  message?: string;
 };
 
 function getBaseUrl(): string {
@@ -111,31 +112,36 @@ export default async function BatchCardPage({ params }: { params: { code: string
     method: "GET",
     cache: "no-store",
   });
+  const requestId = response.headers.get("x-request-id");
+  const bodyText = await response.text();
 
   let payload: BatchCardResponse | null = null;
   try {
-    payload = (await response.json()) as BatchCardResponse;
+    payload = JSON.parse(bodyText) as BatchCardResponse;
   } catch {
+    const preview = bodyText.slice(0, 200);
     return (
       <main>
         <h1>Batch {code}</h1>
-        <p role="alert">Unable to parse server response.</p>
+        <p role="alert">Error: INVALID_JSON_HTTP_{response.status} — {preview || "(empty response body)"}</p>
+        {requestId ? <small style={{ color: "#6b7280" }}>request id: {requestId}</small> : null}
       </main>
     );
   }
 
-  const requestId = response.headers.get("x-request-id") ?? "n/a";
-  const isError = !response.ok || payload?.ok === false;
+  const isError = response.status !== 200 || payload?.ok === false;
 
   if (isError) {
-    const errorCode = payload?.code ?? `HTTP_${response.status}`;
-    const errorMessage = formatUnknown(payload?.error) || "Request failed";
+    const errorMessage =
+      formatUnknown(payload?.message) ||
+      formatUnknown(payload?.error) ||
+      `Request failed (HTTP ${response.status})`;
 
     return (
       <main>
         <h1>Batch {code}</h1>
-        <p role="alert">{response.status === 404 ? "Batch not found" : `${errorMessage} (${errorCode})`}</p>
-        <small style={{ color: "#6b7280" }}>request id: {requestId}</small>
+        <p role="alert">Error: HTTP_{response.status} — {errorMessage}</p>
+        {requestId ? <small style={{ color: "#6b7280" }}>request id: {requestId}</small> : null}
       </main>
     );
   }
@@ -228,7 +234,7 @@ export default async function BatchCardPage({ params }: { params: { code: string
       </section>
 
       <footer>
-        <small style={{ color: "#6b7280" }}>request id: {requestId}</small>
+        {requestId ? <small style={{ color: "#6b7280" }}>request id: {requestId}</small> : null}
       </footer>
     </main>
   );
