@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 type TransitionStatus = "production" | "drying" | "ready" | "closed";
@@ -51,7 +51,6 @@ function getMessage(value: unknown): string {
 
 export default function BatchActions({ code, canTransitionTo, debug = false }: BatchActionsProps) {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [loadingStatus, setLoadingStatus] = useState<TransitionStatus | null>(null);
   const [error, setError] = useState<ActionError | null>(null);
   const [success, setSuccess] = useState<ActionSuccess | null>(null);
@@ -60,12 +59,12 @@ export default function BatchActions({ code, canTransitionTo, debug = false }: B
   const normalizedTransitions = useMemo(() => canTransitionTo ?? {}, [canTransitionTo]);
 
   useEffect(() => {
-    if (!debug && searchParams.get("debug") !== "1") {
+    if (!debug) {
       return;
     }
 
     console.info(`[BatchCard debug] read endpoint: /api/batch/${encodeURIComponent(code)}/card`);
-  }, [code, debug, searchParams]);
+  }, [code, debug]);
 
   async function handleTransition(toStatus: TransitionStatus) {
     setError(null);
@@ -106,10 +105,21 @@ export default function BatchActions({ code, canTransitionTo, debug = false }: B
         cache: "no-store",
       });
 
-      if (debug || searchParams.get("debug") === "1") {
-        console.info(
-          `[BatchCard debug] read endpoint: /api/batch/${encodeURIComponent(code)}/card (status ${cardResponse.status})`
-        );
+      if (debug) {
+        console.info(`[BatchCard debug] read endpoint: /api/batch/${encodeURIComponent(code)}/card (status ${cardResponse.status})`);
+      }
+
+      if (!cardResponse.ok) {
+        const cardPayload = (await cardResponse.json().catch(() => null)) as
+          | { ok?: boolean; code?: string; error?: unknown }
+          | null;
+
+        setError({
+          code: cardPayload?.code ?? `HTTP_${cardResponse.status}`,
+          message: getMessage(cardPayload?.error) || "Failed to refresh batch card",
+          requestId: cardResponse.headers.get("x-request-id") ?? requestId,
+        });
+        return;
       }
 
       setSuccess({ status: toStatus, requestId });
