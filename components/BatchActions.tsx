@@ -1,13 +1,14 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 type TransitionStatus = "production" | "drying" | "ready" | "closed";
 
 type BatchActionsProps = {
   code: string;
   canTransitionTo: Record<string, boolean>;
+  debug?: boolean;
 };
 
 type ActionError = {
@@ -28,12 +29,8 @@ const ACTIONS: Array<{ label: string; toStatus: TransitionStatus }> = [
   { label: "Close batch", toStatus: "closed" },
 ];
 
-function createIdempotencyKey(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-
-  return `idem-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+function createIdempotencyKey(target: TransitionStatus): string {
+  return `ui-${target}-${Date.now()}`;
 }
 
 function getMessage(value: unknown): string {
@@ -52,14 +49,23 @@ function getMessage(value: unknown): string {
   }
 }
 
-export default function BatchActions({ code, canTransitionTo }: BatchActionsProps) {
+export default function BatchActions({ code, canTransitionTo, debug = false }: BatchActionsProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loadingStatus, setLoadingStatus] = useState<TransitionStatus | null>(null);
   const [error, setError] = useState<ActionError | null>(null);
   const [success, setSuccess] = useState<ActionSuccess | null>(null);
 
   const isLoading = loadingStatus !== null;
   const normalizedTransitions = useMemo(() => canTransitionTo ?? {}, [canTransitionTo]);
+
+  useEffect(() => {
+    if (!debug && searchParams.get("debug") !== "1") {
+      return;
+    }
+
+    console.info(`[BatchCard debug] read endpoint: /api/batch/${encodeURIComponent(code)}/card`);
+  }, [code, debug, searchParams]);
 
   async function handleTransition(toStatus: TransitionStatus) {
     setError(null);
@@ -76,7 +82,7 @@ export default function BatchActions({ code, canTransitionTo }: BatchActionsProp
         },
         body: JSON.stringify({
           to_status: toStatus,
-          idempotency_key: createIdempotencyKey(),
+          idempotency_key: createIdempotencyKey(toStatus),
         }),
       });
 
@@ -94,6 +100,16 @@ export default function BatchActions({ code, canTransitionTo }: BatchActionsProp
           requestId,
         });
         return;
+      }
+
+      const cardResponse = await fetch(`/api/batch/${encodeURIComponent(code)}/card`, {
+        cache: "no-store",
+      });
+
+      if (debug || searchParams.get("debug") === "1") {
+        console.info(
+          `[BatchCard debug] read endpoint: /api/batch/${encodeURIComponent(code)}/card (status ${cardResponse.status})`
+        );
       }
 
       setSuccess({ status: toStatus, requestId });

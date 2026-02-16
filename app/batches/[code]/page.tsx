@@ -34,17 +34,25 @@ type BatchCardResponse = {
   code?: string;
 };
 
-function getOrigin(): string {
+function getRequestContext(): { origin: string; cookieHeader: string } {
   const h = headers();
   const protocol = h.get("x-forwarded-proto") ?? "https";
   const host = h.get("x-forwarded-host") ?? h.get("host");
+  const cookieHeader = h.get("cookie") ?? "";
 
   if (!host) {
-    return process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    return {
+      origin: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
+      cookieHeader,
+    };
   }
 
-  return `${protocol}://${host}`;
+  return {
+    origin: `${protocol}://${host}`,
+    cookieHeader,
+  };
 }
+
 function formatDryRemaining(ms: number | null | undefined): string {
   if (typeof ms !== "number" || ms < 0) {
     return "—";
@@ -106,10 +114,18 @@ function parseDetails(details: unknown): string {
   }
 }
 
-export default async function BatchCardPage({ params }: { params: { code: string } }) {
+export default async function BatchCardPage({
+  params,
+  searchParams,
+}: {
+  params: { code: string };
+  searchParams?: { debug?: string };
+}) {
   const code = decodeURIComponent(params.code);
-  const response = await fetch(`${getOrigin()}/api/batch/${encodeURIComponent(code)}/card`, {
+  const { origin, cookieHeader } = getRequestContext();
+  const response = await fetch(`${origin}/api/batch/${encodeURIComponent(code)}/card`, {
     cache: "no-store",
+    headers: cookieHeader ? { cookie: cookieHeader } : undefined,
   });
 
   const requestId = response.headers.get("x-request-id") ?? "n/a";
@@ -153,6 +169,7 @@ export default async function BatchCardPage({ params }: { params: { code: string
   const dryEndAt = derived.dry_end_at ?? batch.dry_end_at;
   const note = typeof batch.note === "string" ? batch.note.trim() : "";
   const transitions = derived.can_transition_to ?? {};
+  const debug = searchParams?.debug === "1";
 
   return (
     <main style={{ display: "grid", gap: 16 }}>
@@ -190,7 +207,7 @@ export default async function BatchCardPage({ params }: { params: { code: string
         </dl>
       </section>
 
-      <BatchActions code={code} canTransitionTo={transitions} />
+      <BatchActions code={code} canTransitionTo={transitions} debug={debug} />
 
       <section>
         <h2>Derived</h2>
