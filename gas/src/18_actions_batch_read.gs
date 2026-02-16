@@ -60,6 +60,35 @@
     };
   });
 
+
+  Actions_.register_('batch_events_list', (ctx) => {
+    const payload = ctx.payload || {};
+    const code = String(payload.code || '').trim();
+
+    if (!code) {
+      throw new Error(ERROR.BAD_REQUEST + ': missing code');
+    }
+
+    const batchRegistry = getBatchRegistrySheet_();
+    if (!batchRegistry) {
+      throw new Error(ERROR.NOT_FOUND + ': Batch not found');
+    }
+
+    const batchRows = readRowsByHeader_(batchRegistry);
+    const batchExists = batchRows.some((row) => String(row.code || '').trim() === code);
+    if (!batchExists) {
+      throw new Error(ERROR.NOT_FOUND + ': Batch not found');
+    }
+
+    const events = BatchEventsRepo_.listBatchEvents(code)
+      .map((row) => normalizeBatchEvent_(row))
+      .sort((left, right) => compareEventsByAt_(left, right));
+
+    return {
+      batch_code: code,
+      events,
+    };
+  });
   Actions_.register_('batch_fetch', (ctx) => {
     const payload = ctx.payload || {};
     const identifier = String(payload.code || payload.id || '').trim();
@@ -86,6 +115,49 @@
 
     return row;
   });
+
+
+  function normalizeBatchEvent_(row) {
+    const at = String(row.at || '').trim();
+    const type = String(row.type || '').trim();
+    const actorRaw = String(row.actor || '').trim();
+    const payloadRaw = String(row.payload || '').trim();
+
+    let details = undefined;
+    if (payloadRaw) {
+      try {
+        details = JSON.parse(payloadRaw);
+      } catch (error) {
+        details = payloadRaw;
+      }
+    }
+
+    return {
+      ...row,
+      at,
+      type,
+      ...(actorRaw ? { actor: actorRaw } : {}),
+      ...(details !== undefined ? { details } : {}),
+    };
+  }
+
+  function compareEventsByAt_(left, right) {
+    const leftAt = String(left.at || '').trim();
+    const rightAt = String(right.at || '').trim();
+
+    if (!leftAt || !rightAt) {
+      return 0;
+    }
+
+    const leftTime = Date.parse(leftAt);
+    const rightTime = Date.parse(rightAt);
+
+    if (Number.isNaN(leftTime) || Number.isNaN(rightTime)) {
+      return 0;
+    }
+
+    return leftTime - rightTime;
+  }
 
   function parseDateFilter_(raw, field, isEndOfDay) {
     if (raw === undefined || raw === null || String(raw).trim() === '') {
