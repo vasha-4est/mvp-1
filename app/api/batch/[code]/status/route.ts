@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { callGas } from "../../../../../lib/integrations/gasClient";
+import { REQUEST_ID_HEADER } from "../../../../../lib/obs/requestId";
+import { requireAnyRole } from "../../../../../lib/server/guards";
 
 type BatchStatus = "created" | "production" | "drying" | "ready" | "closed";
 
@@ -15,24 +17,11 @@ type PatchStatusResult = {
   replayed: boolean;
 };
 
-function getOrCreateRequestId(request: Request): string {
-  const existing = request.headers.get("x-request-id");
-  if (existing && existing.trim()) {
-    return existing.trim();
-  }
-
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-
-  return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
 function withApiLog(body: Record<string, unknown>, status: number, requestId: string) {
   return NextResponse.json(body, {
     status,
     headers: {
-      "x-request-id": requestId,
+      [REQUEST_ID_HEADER]: requestId,
     },
   });
 }
@@ -44,9 +33,6 @@ function isValidBatchCode(value: string): boolean {
   return BATCH_CODE_PATTERNS.some((pattern) => pattern.test(value));
 }
 
-function authorizeRequest() {
-  return true;
-}
 
 function parseErrorPayload(rawError: unknown): {
   error: string;
@@ -179,11 +165,12 @@ function parseForcedDryEndAt(value: string | null): string | undefined {
 }
 
 export async function PATCH(request: Request, context: { params: { code: string } }) {
-  const requestId = getOrCreateRequestId(request);
-
-  if (!authorizeRequest()) {
-    return withApiLog({ ok: false, error: "Unauthorized", code: "UNAUTHORIZED" }, 401, requestId);
+  const auth = requireAnyRole(request, ["OWNER", "COO"]);
+  if (auth.ok === false) {
+    return auth.response;
   }
+
+  const requestId = auth.requestId;
 
   const code = String(context.params.code || "").trim();
 
