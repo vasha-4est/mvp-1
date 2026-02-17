@@ -33,18 +33,21 @@ Required environment variables:
 
 Main auth endpoints:
 
-- `GET /api/auth/login`
-- `GET /api/auth/callback`
-- `GET|POST /api/auth/logout`
-- `GET /api/auth/me`
+- `GET /auth/login`
+- `GET /auth/callback`
+- `GET /auth/logout`
+- `GET /auth/me` (Auth0 session debug)
+- `GET /api/auth/me` (app signed-session role)
 
 
 Auth0 Preview smoke test:
 
-- Open `/api/auth/login`
+- Open `/auth/login`
 - Complete Auth0 login and return through callback
 - Confirm you are redirected and `session` cookie is set
 - Verify role-based behavior via `/api/auth/me` and `/api/owner/dashboard`
+
+See also: [Auth0 variables and role mapping](./docs/auth0.md).
 
 ## Dev auth for Preview/Development only
 Use the dev auth endpoints to quickly set a session during smoke testing in non-production auth environments:

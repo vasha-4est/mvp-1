@@ -6,7 +6,7 @@ import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 export async function GET(request: Request) {
   const auth = requireAuth(request);
 
-  if (!auth.ok) {
+  if (auth.ok === false) {
     return auth.response;
   }
 

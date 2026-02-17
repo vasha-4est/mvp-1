@@ -38,9 +38,8 @@ export function AuthStatus() {
     };
   }, []);
 
-  const onLogout = async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
-    window.location.reload();
+  const onLogout = () => {
+    window.location.href = "/auth/logout";
   };
 
   return (
@@ -49,7 +48,7 @@ export function AuthStatus() {
       {auth.loading ? "Loading…" : auth.role ? `Role: ${auth.role}` : "Not logged in"}
       <div style={{ marginTop: 8 }}>
         {!auth.role ? (
-          <a href="/api/auth/login">Login</a>
+          <a href="/auth/login">Login</a>
         ) : (
           <button type="button" onClick={onLogout}>
             Logout

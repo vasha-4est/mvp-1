@@ -5,8 +5,6 @@ import { REQUEST_ID_HEADER, getOrCreateRequestId } from "@/lib/obs/requestId";
 import { logJson } from "@/lib/obs/logger";
 
 export const SESSION_COOKIE_NAME = "session";
-const USER_ROLE_HEADER = "x-user-role";
-
 const ALLOWED_ROLES = ["OWNER", "COO", "VIEWER"] as const;
 
 type AllowedRole = (typeof ALLOWED_ROLES)[number];
@@ -64,14 +62,6 @@ export function isAllowedRole(role: unknown): role is AllowedRole {
 }
 
 export function getRoleFromRequest(request: Request): string | null {
-  const fromHeader = request.headers.get(USER_ROLE_HEADER);
-  if (typeof fromHeader === "string" && fromHeader.trim()) {
-    const normalizedHeaderRole = fromHeader.trim().toUpperCase();
-    if (isAllowedRole(normalizedHeaderRole)) {
-      return normalizeRole(normalizedHeaderRole);
-    }
-  }
-
   const cookieHeader = request.headers.get("cookie") ?? "";
   if (!cookieHeader.trim()) {
     return null;

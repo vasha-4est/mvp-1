@@ -106,7 +106,7 @@ export default async function OwnerDashboardPage() {
       <main>
         <h1>Owner Dashboard</h1>
         <AuthStatus />
-        <p role="alert">Access denied.</p>
+        <p role="alert">Access denied. <a href="/auth/login?returnTo=/owner">Login</a></p>
         <small>request id: {requestId}</small>
       </main>
     );
