@@ -17,6 +17,8 @@
     const code = String(payload.code || '').trim();
     const toStatus = String(payload.to_status || '').trim();
     const idempotencyKey = String(payload.idempotency_key || '').trim();
+    const forcedDryEndAtRaw = String(payload.forced_dry_end_at || '').trim();
+    const forcedDryEndAt = parseDateIfPresent_(forcedDryEndAtRaw);
 
     validateInput_(code, toStatus, idempotencyKey);
 
@@ -91,7 +93,7 @@
       let nextDryEndAt = String(row.dry_end_at || '').trim();
 
       if (toStatus === 'ready') {
-        const dryEndAt = parseDateIfPresent_(row.dry_end_at);
+        const dryEndAt = forcedDryEndAt || parseDateIfPresent_(row.dry_end_at);
         if (dryEndAt && now.getTime() < dryEndAt.getTime()) {
           throw conflictError_('DRYING_NOT_FINISHED', 'Drying not finished', {
             dry_end_at: dryEndAt.toISOString(),
