@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { DEV_ROLE_COOKIE_NAME, isProductionAuthEnvironment } from "@/lib/auth";
+import { SESSION_COOKIE_NAME, isProductionAuthEnvironment } from "@/lib/auth";
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from "@/lib/obs/requestId";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
@@ -19,17 +19,14 @@ export async function POST(request: Request) {
     return json(requestId, 404, { ok: false, error: "Not found", code: "NOT_FOUND" });
   }
 
-  const url = new URL(request.url);
-  const isHttps = url.protocol === "https:";
-
   const response = json(requestId, 200, { ok: true });
   response.cookies.set({
-    name: DEV_ROLE_COOKIE_NAME,
+    name: SESSION_COOKIE_NAME,
     value: "",
     httpOnly: true,
     sameSite: "lax",
     path: "/",
-    secure: isHttps,
+    secure: process.env.NODE_ENV === "production",
     maxAge: 0,
   });
 

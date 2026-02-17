@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 
+import { verifySession } from "@/lib/session";
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from "@/lib/obs/requestId";
 import { logJson } from "@/lib/obs/logger";
 
-export const DEV_ROLE_COOKIE_NAME = "mvp1_role";
+export const SESSION_COOKIE_NAME = "session";
 
 const ALLOWED_ROLES = ["OWNER", "COO", "VIEWER"] as const;
 
@@ -62,26 +63,23 @@ export function isAllowedRole(role: unknown): role is AllowedRole {
 }
 
 export function getRoleFromRequest(request: Request): string | null {
-  if (isProductionAuthEnvironment()) {
-    return null;
-  }
-
   const cookieHeader = request.headers.get("cookie") ?? "";
   if (!cookieHeader.trim()) {
     return null;
   }
 
   const cookies = parseCookieHeader(cookieHeader);
-  const rawRole = cookies[DEV_ROLE_COOKIE_NAME];
-  if (!rawRole || !rawRole.trim()) {
+  const sessionToken = cookies[SESSION_COOKIE_NAME];
+  if (!sessionToken || !sessionToken.trim()) {
     return null;
   }
 
-  if (!isAllowedRole(rawRole.trim().toUpperCase())) {
+  const verified = verifySession(sessionToken);
+  if (!verified || !isAllowedRole(verified.role.trim().toUpperCase())) {
     return null;
   }
 
-  return normalizeRole(rawRole);
+  return normalizeRole(verified.role);
 }
 
 function jsonError(status: 401 | 403, requestId: string, body: { error: string; code: string }) {
