@@ -91,7 +91,7 @@ function getDryEndAt(batch: BatchData, events: BatchEvent[]): string | null {
   return latestDryEndAt;
 }
 
-function canTransitionTo(status: BatchStatus) {
+function canTransitionTo(status: BatchStatus, dryEndAtMs: number, now: number) {
   if (status === "created") {
     return { production: true, drying: false, ready: false, closed: false };
   }
@@ -101,7 +101,8 @@ function canTransitionTo(status: BatchStatus) {
   }
 
   if (status === "drying") {
-    return { production: false, drying: false, ready: true, closed: false };
+    const ready = Number.isFinite(dryEndAtMs) ? now >= dryEndAtMs : true;
+    return { production: false, drying: false, ready, closed: false };
   }
 
   if (status === "ready") {
@@ -174,8 +175,9 @@ export async function GET(request: Request, context: CardRouteContext) {
     const dryEndAtMs = dryEndAt ? Date.parse(dryEndAt) : Number.NaN;
     const hasDryEndAt = dryEndAt !== null && Number.isFinite(dryEndAtMs);
 
-    const dryRemainingMs = isDrying && hasDryEndAt ? Math.max(0, dryEndAtMs - Date.now()) : null;
-    const isDryingOverdue = isDrying && hasDryEndAt ? Date.now() > dryEndAtMs : null;
+    const now = Date.now();
+    const dryRemainingMs = isDrying && hasDryEndAt ? Math.max(dryEndAtMs - now, 0) : null;
+    const isDryingOverdue = isDrying && hasDryEndAt ? now > dryEndAtMs : null;
 
     return json(
       requestId,
@@ -191,7 +193,7 @@ export async function GET(request: Request, context: CardRouteContext) {
             dry_end_at: dryEndAt,
             dry_remaining_ms: dryRemainingMs,
             is_drying_overdue: isDryingOverdue,
-            can_transition_to: canTransitionTo(status),
+            can_transition_to: canTransitionTo(status, dryEndAtMs, now),
           },
         },
       },
