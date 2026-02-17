@@ -38,6 +38,14 @@ Main auth endpoints:
 - `GET|POST /api/auth/logout`
 - `GET /api/auth/me`
 
+
+Auth0 Preview smoke test:
+
+- Open `/api/auth/login`
+- Complete Auth0 login and return through callback
+- Confirm you are redirected and `session` cookie is set
+- Verify role-based behavior via `/api/auth/me` and `/api/owner/dashboard`
+
 ## Dev auth for Preview/Development only
 Use the dev auth endpoints to quickly set a session during smoke testing in non-production auth environments:
 
