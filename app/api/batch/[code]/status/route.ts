@@ -203,12 +203,10 @@ export async function PATCH(request: Request, context: { params: { code: string 
     );
   }
 
-  const debugHooksEnabled = process.env.ENABLE_DEBUG_HOOKS === "true";
   const isDebugRequest = new URL(request.url).searchParams.get("debug") === "1";
-  const shouldUseForcedDryEndAt =
-    debugHooksEnabled && isDebugRequest && validation.value.to_status === "ready";
+  const shouldUseForcedDryEndAt = isDebugRequest && validation.value.to_status === "ready";
   const forcedDryEndAt = shouldUseForcedDryEndAt
-    ? parseForcedDryEndAt(request.headers.get("x-mvp-debug-force-dry-end-at"))
+    ? parseForcedDryEndAt(request.headers.get("x-mvp-debug-force-dry-end-at")) ?? new Date(0).toISOString()
     : undefined;
 
   try {
