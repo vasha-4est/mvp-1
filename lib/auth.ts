@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { verifySession } from "@/lib/session";
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from "@/lib/obs/requestId";
 import { logJson } from "@/lib/obs/logger";
 
@@ -36,21 +37,49 @@ function normalizeRole(role: string): string {
   return role.trim().toLowerCase();
 }
 
+function parseCookieHeader(cookieHeader: string): Record<string, string> {
+  return cookieHeader
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .reduce<Record<string, string>>((acc, entry) => {
+      const separator = entry.indexOf("=");
+      if (separator <= 0) {
+        return acc;
+      }
+
+      const key = decodeURIComponent(entry.slice(0, separator).trim());
+      const value = decodeURIComponent(entry.slice(separator + 1).trim());
+      if (key) {
+        acc[key] = value;
+      }
+
+      return acc;
+    }, {});
+}
+
 export function isAllowedRole(role: unknown): role is AllowedRole {
   return typeof role === "string" && ALLOWED_ROLES.includes(role as AllowedRole);
 }
 
 export function getRoleFromRequest(request: Request): string | null {
-  const rawRole = request.headers.get("x-user-role");
-  if (!rawRole || !rawRole.trim()) {
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  if (!cookieHeader.trim()) {
     return null;
   }
 
-  if (!isAllowedRole(rawRole.trim().toUpperCase())) {
+  const cookies = parseCookieHeader(cookieHeader);
+  const sessionToken = cookies[SESSION_COOKIE_NAME];
+  if (!sessionToken || !sessionToken.trim()) {
     return null;
   }
 
-  return normalizeRole(rawRole);
+  const verified = verifySession(sessionToken);
+  if (!verified || !isAllowedRole(verified.role.trim().toUpperCase())) {
+    return null;
+  }
+
+  return normalizeRole(verified.role);
 }
 
 function jsonError(status: 401 | 403, requestId: string, body: { error: string; code: string }) {

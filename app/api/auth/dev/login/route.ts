@@ -17,12 +17,7 @@ function json(requestId: string, status: number, body: Record<string, unknown>) 
   });
 }
 
-function extractRole(request: Request, body: unknown): string | null {
-  const roleFromQuery = new URL(request.url).searchParams.get("role");
-  if (roleFromQuery && roleFromQuery.trim()) {
-    return roleFromQuery.trim().toUpperCase();
-  }
-
+function extractRole(body: unknown): string | null {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return null;
   }
@@ -49,7 +44,7 @@ export async function POST(request: Request) {
     body = null;
   }
 
-  const role = extractRole(request, body);
+  const role = extractRole(body);
   if (!role || !isAllowedRole(role)) {
     return json(requestId, 400, {
       ok: false,
