@@ -7,6 +7,7 @@ type BatchStatus = "created" | "production" | "drying" | "ready" | "closed";
 type PatchStatusRequest = {
   to_status: BatchStatus;
   idempotency_key: string;
+  forced_dry_end_at?: string;
 };
 
 type PatchStatusResult = {
@@ -159,6 +160,24 @@ function validateRequest(
   };
 }
 
+function parseForcedDryEndAt(value: string | null): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const candidate = value.trim();
+  if (!candidate) {
+    return undefined;
+  }
+
+  const parsedMs = Date.parse(candidate);
+  if (!Number.isFinite(parsedMs)) {
+    return undefined;
+  }
+
+  return candidate;
+}
+
 export async function PATCH(request: Request, context: { params: { code: string } }) {
   const requestId = getOrCreateRequestId(request);
 
@@ -184,6 +203,14 @@ export async function PATCH(request: Request, context: { params: { code: string 
     );
   }
 
+  const debugHooksEnabled = process.env.ENABLE_DEBUG_HOOKS === "true";
+  const isDebugRequest = new URL(request.url).searchParams.get("debug") === "1";
+  const shouldUseForcedDryEndAt =
+    debugHooksEnabled && isDebugRequest && validation.value.to_status === "ready";
+  const forcedDryEndAt = shouldUseForcedDryEndAt
+    ? parseForcedDryEndAt(request.headers.get("x-mvp-debug-force-dry-end-at"))
+    : undefined;
+
   try {
     const gasResponse = await callGas<PatchStatusResult>(
       "batch_status_patch",
@@ -191,6 +218,7 @@ export async function PATCH(request: Request, context: { params: { code: string 
         code,
         to_status: validation.value.to_status,
         idempotency_key: validation.value.idempotency_key,
+        ...(forcedDryEndAt ? { forced_dry_end_at: forcedDryEndAt } : {}),
       },
       requestId
     );
@@ -210,7 +238,18 @@ export async function PATCH(request: Request, context: { params: { code: string 
     }
 
     return withApiLog(
-      { ok: true, batch: gasResponse.data.batch, replayed: gasResponse.data.replayed },
+      {
+        ok: true,
+        batch: gasResponse.data.batch,
+        replayed: gasResponse.data.replayed,
+        ...(forcedDryEndAt
+          ? {
+              debug: {
+                forced_dry_end_at: forcedDryEndAt,
+              },
+            }
+          : {}),
+      },
       200,
       requestId
     );
