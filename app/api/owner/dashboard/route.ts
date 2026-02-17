@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 
-import { authorizeOwner } from "@/lib/auth/owner";
+import { requireRole } from "@/lib/server/guards";
 import { callGas } from "@/lib/integrations/gasClient";
-import { REQUEST_ID_HEADER, getOrCreateRequestId } from "@/lib/obs/requestId";
+import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 
 type BatchStatus = "created" | "production" | "drying" | "ready" | "closed";
 
@@ -61,16 +61,13 @@ function normalizeStatus(value: unknown): BatchStatus {
 }
 
 export async function GET(request: Request) {
-  const requestId = getOrCreateRequestId(request);
-  const auth = authorizeOwner(request);
+  const auth = requireRole(request, "OWNER");
 
   if (auth.ok === false) {
-    return json(requestId, auth.status, {
-      ok: false,
-      error: auth.message,
-      code: auth.code,
-    });
+    return auth.response;
   }
+
+  const requestId = auth.requestId;
 
   try {
     const batchesResponse = await callGas<BatchListResponse>("batch_list", {}, requestId);
