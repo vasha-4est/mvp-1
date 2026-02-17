@@ -1,5 +1,7 @@
 import { headers } from "next/headers";
 
+import { AuthStatus } from "@/components/AuthStatus";
+
 type DashboardResponse = {
   ok?: boolean;
   data?: {
@@ -92,6 +94,7 @@ export default async function OwnerDashboardPage() {
     return (
       <main>
         <h1>Owner Dashboard</h1>
+        <AuthStatus />
         <p role="alert">Failed to parse API response.</p>
         <small>request id: {requestId}</small>
       </main>
@@ -102,6 +105,7 @@ export default async function OwnerDashboardPage() {
     return (
       <main>
         <h1>Owner Dashboard</h1>
+        <AuthStatus />
         <p role="alert">Access denied.</p>
         <small>request id: {requestId}</small>
       </main>
@@ -112,6 +116,7 @@ export default async function OwnerDashboardPage() {
     return (
       <main>
         <h1>Owner Dashboard</h1>
+        <AuthStatus />
         <p role="alert">Failed to load dashboard.</p>
         <small>request id: {requestId}</small>
       </main>
@@ -126,6 +131,7 @@ export default async function OwnerDashboardPage() {
   return (
     <main style={{ display: "grid", gap: 20 }}>
       <h1>Owner Dashboard</h1>
+      <AuthStatus />
 
       <section>
         <h2>WIP Summary</h2>

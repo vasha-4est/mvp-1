@@ -21,13 +21,30 @@ MVP-1 is an early-stage operations app foundation focused on predictable deliver
 4. Open the Preview URL from the PR checks.
 5. Confirm the app loads successfully.
 
+## Auth setup
+Required environment variables:
+
+- `SESSION_SECRET`
+- `AUTH0_SECRET`
+- `AUTH0_BASE_URL`
+- `AUTH0_ISSUER_BASE_URL`
+- `AUTH0_CLIENT_ID`
+- `AUTH0_CLIENT_SECRET`
+
+Main auth endpoints:
+
+- `GET /api/auth/login`
+- `GET /api/auth/callback`
+- `GET|POST /api/auth/logout`
+- `GET /api/auth/me`
+
 ## Dev auth for Preview/Development only
-Use the dev auth endpoints to quickly set a role cookie during smoke testing in Preview/Development:
+Use the dev auth endpoints to quickly set a session during smoke testing in non-production auth environments:
 
-- `POST /api/auth/dev/login` with JSON body `{ "role": "OWNER" }` (or query `?role=OWNER`) sets an `httpOnly` role cookie.
-- `POST /api/auth/dev/logout` clears the role cookie.
+- `POST /api/auth/dev/login` with JSON body `{ "role": "OWNER" }` sets an `httpOnly` signed session cookie.
+- `POST /api/auth/dev/logout` clears the signed session cookie.
 
-`VERCEL_ENV=production` disables both endpoints (they return `404`) and role-cookie auth is ignored on protected routes, so production requires real auth/session.
+`VERCEL_ENV=production` disables both endpoints (they return `404`), so production requires real Auth0 login/session.
 
 ## Documentation location
 All project scaffolding docs are in [`/docs`](./docs):

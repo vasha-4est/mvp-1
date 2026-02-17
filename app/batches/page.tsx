@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 
+import { AuthStatus } from "@/components/AuthStatus";
 import { BatchList } from "../../components/batch/BatchList";
 import { listBatches } from "../../lib/api/batch";
 
@@ -36,6 +37,7 @@ export default async function BatchesPage({
 
   return (
     <main>
+      <AuthStatus />
       <BatchList
         items={result.items}
         error={result.error}
