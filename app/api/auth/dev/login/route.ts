@@ -60,7 +60,12 @@ export async function POST(request: Request) {
 
   response.cookies.set({
     name: SESSION_COOKIE_NAME,
-    value: signSession({ role, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 8 }),
+    value: signSession({
+      user_id: "dev-user",
+      username: "dev",
+      roles: [role],
+      exp: Math.floor(Date.now() / 1000) + 60 * 60 * 8,
+    }),
     httpOnly: true,
     sameSite: "lax",
     path: "/",

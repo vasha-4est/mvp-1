@@ -3,17 +3,14 @@ import { NextResponse } from "next/server";
 import { verifySession } from "@/lib/session";
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from "@/lib/obs/requestId";
 import { logJson } from "@/lib/obs/logger";
+import { ALLOWED_ROLES, type AllowedRole } from "@/lib/server/controlModel";
 
 export const SESSION_COOKIE_NAME = "session";
-
-const ALLOWED_ROLES = ["OWNER", "COO", "VIEWER"] as const;
-
-type AllowedRole = (typeof ALLOWED_ROLES)[number];
 
 type GuardSuccess = {
   ok: true;
   requestId: string;
-  role: string;
+  roles: string[];
 };
 
 type GuardFailure = {
@@ -31,10 +28,6 @@ export function isProductionAuthEnvironment(): boolean {
   }
 
   return process.env.NODE_ENV === "production";
-}
-
-function normalizeRole(role: string): string {
-  return role.trim().toLowerCase();
 }
 
 function parseCookieHeader(cookieHeader: string): Record<string, string> {
@@ -62,7 +55,7 @@ export function isAllowedRole(role: unknown): role is AllowedRole {
   return typeof role === "string" && ALLOWED_ROLES.includes(role as AllowedRole);
 }
 
-export function getRoleFromRequest(request: Request): string | null {
+export function getSessionFromRequest(request: Request): { user_id: string; username: string; roles: string[] } | null {
   const cookieHeader = request.headers.get("cookie") ?? "";
   if (!cookieHeader.trim()) {
     return null;
@@ -75,11 +68,15 @@ export function getRoleFromRequest(request: Request): string | null {
   }
 
   const verified = verifySession(sessionToken);
-  if (!verified || !isAllowedRole(verified.role.trim().toUpperCase())) {
+  if (!verified) {
     return null;
   }
 
-  return normalizeRole(verified.role);
+  return {
+    user_id: verified.user_id,
+    username: verified.username,
+    roles: verified.roles.filter((role) => isAllowedRole(role)),
+  };
 }
 
 function jsonError(status: 401 | 403, requestId: string, body: { error: string; code: string }) {
@@ -97,7 +94,7 @@ function jsonError(status: 401 | 403, requestId: string, body: { error: string; 
   );
 }
 
-function logSecurityViolation(request: Request, requestId: string, role: string | null, reason: string) {
+function logSecurityViolation(request: Request, requestId: string, roles: string[] | null, reason: string) {
   const url = new URL(request.url);
 
   logJson({
@@ -108,7 +105,7 @@ function logSecurityViolation(request: Request, requestId: string, role: string 
       details: {
         route: url.pathname,
         method: request.method,
-        role,
+        roles,
         reason,
       },
     },
@@ -117,10 +114,10 @@ function logSecurityViolation(request: Request, requestId: string, role: string 
 
 export function requireAuth(request: Request): GuardResult {
   const requestId = getOrCreateRequestId(request);
-  const role = getRoleFromRequest(request);
+  const session = getSessionFromRequest(request);
 
-  if (!role) {
-    logSecurityViolation(request, requestId, null, "missing_role");
+  if (!session || session.roles.length === 0) {
+    logSecurityViolation(request, requestId, null, "missing_session");
     return {
       ok: false,
       requestId,
@@ -134,7 +131,7 @@ export function requireAuth(request: Request): GuardResult {
   return {
     ok: true,
     requestId,
-    role,
+    roles: session.roles.map((role) => role.toLowerCase()),
   };
 }
 
@@ -153,8 +150,10 @@ export function requireAnyRole(request: Request, roles: string[]): GuardResult {
   }
 
   const allowed = roles.map((item) => item.trim().toLowerCase()).filter(Boolean);
-  if (!allowed.includes(auth.role)) {
-    logSecurityViolation(request, auth.requestId, auth.role, "insufficient_role");
+  const hasRole = auth.roles.some((role) => allowed.includes(role));
+
+  if (!hasRole) {
+    logSecurityViolation(request, auth.requestId, auth.roles, "insufficient_role");
     return {
       ok: false,
       requestId: auth.requestId,

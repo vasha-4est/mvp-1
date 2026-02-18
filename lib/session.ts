@@ -1,8 +1,15 @@
 import { createHmac, timingSafeEqual } from "crypto";
 
-type SessionPayload = {
-  role: string;
+export type SessionPayload = {
+  user_id: string;
+  username: string;
+  roles: string[];
   exp: number;
+};
+
+type LegacyPayload = {
+  role?: string;
+  exp?: number;
 };
 
 function getSessionSecret(): string {
@@ -32,7 +39,7 @@ export function signSession(payload: SessionPayload): string {
   return `${encodedPayload}.${signature}`;
 }
 
-export function verifySession(token: string): { role: string } | null {
+export function verifySession(token: string): SessionPayload | null {
   const separator = token.indexOf(".");
   if (separator <= 0) {
     return null;
@@ -72,20 +79,39 @@ export function verifySession(token: string): { role: string } | null {
     return null;
   }
 
-  const role = (payload as SessionPayload).role;
   const exp = (payload as SessionPayload).exp;
-
-  if (typeof role !== "string" || !role.trim()) {
+  if (typeof exp !== "number" || !Number.isFinite(exp) || Date.now() >= exp * 1000) {
     return null;
   }
 
-  if (typeof exp !== "number" || !Number.isFinite(exp)) {
-    return null;
+  const userId = (payload as SessionPayload).user_id;
+  const username = (payload as SessionPayload).username;
+  const roles = (payload as SessionPayload).roles;
+
+  if (typeof userId === "string" && typeof username === "string" && Array.isArray(roles)) {
+    const normalizedRoles = roles
+      .filter((role): role is string => typeof role === "string" && !!role.trim())
+      .map((role) => role.trim().toUpperCase());
+
+    if (userId.trim() && username.trim() && normalizedRoles.length > 0) {
+      return {
+        user_id: userId,
+        username: username,
+        roles: normalizedRoles.filter((role, index, arr) => arr.indexOf(role) === index),
+        exp,
+      };
+    }
   }
 
-  if (Date.now() >= exp * 1000) {
-    return null;
+  const legacy = payload as LegacyPayload;
+  if (typeof legacy.role === "string" && legacy.role.trim()) {
+    return {
+      user_id: "legacy",
+      username: "legacy",
+      roles: [legacy.role.trim().toUpperCase()],
+      exp,
+    };
   }
 
-  return { role: role.trim().toLowerCase() };
+  return null;
 }
