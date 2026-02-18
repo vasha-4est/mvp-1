@@ -31,7 +31,11 @@ export default function LoginPage() {
 
       const payload = (await response.json()) as LoginPayload;
       if (!response.ok || payload.ok === false) {
-        setError(payload.error ?? payload.code ?? "Login failed");
+        if (response.status === 401 && payload.code === "INVALID_CREDENTIALS") {
+          setError("Invalid username or password");
+        } else {
+          setError(payload.error ?? payload.code ?? "Login failed");
+        }
         return;
       }
 

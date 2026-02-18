@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { isProductionAuthEnvironment, requireOwner } from "@/lib/auth";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
-import { generateTempPassword, hashPassword } from "@/lib/password";
+import { generateTempPassword, hashPassword, isProbablyHash } from "@/lib/password";
 import {
   ensureUsersDirectoryColumns,
   getUsersDirectoryRows,
@@ -47,19 +47,43 @@ export async function POST(request: Request) {
     const users = await getUsersDirectoryRows();
     const now = new Date().toISOString();
 
+    let processed = 0;
+    let migratedLegacy = 0;
+    let alreadyHashed = 0;
+    let skippedInactive = 0;
+
     const items: Array<{ user_id: string; login: string; temp_password: string; must_change_password: boolean }> = [];
 
     for (const user of users) {
       if (!user.is_active || !user.login.trim()) {
+        skippedInactive += 1;
         continue;
       }
 
-      const shouldProvision = mode === "reset_all" || !user.password_hash.trim();
-      if (!shouldProvision) {
+      const hasHash = isProbablyHash(user.password_hash ?? "");
+      if (hasHash) {
+        if (mode === "missing_only") {
+          alreadyHashed += 1;
+          continue;
+        }
+      }
+
+      const hasLegacyPlaintext = !!user.password_hash.trim() && !hasHash;
+      const isMissing = !user.password_hash.trim();
+
+      if (mode === "missing_only" && !hasLegacyPlaintext && !isMissing) {
+        alreadyHashed += 1;
         continue;
       }
 
-      const tempPassword = generateTempPassword(user.login);
+      let tempPassword = "";
+      if (mode === "reset_all" || isMissing) {
+        tempPassword = generateTempPassword(user.login);
+      } else if (hasLegacyPlaintext) {
+        tempPassword = user.password_hash;
+        migratedLegacy += 1;
+      }
+
       const passwordHash = await hashPassword(tempPassword);
 
       user.password_hash = passwordHash;
@@ -68,6 +92,7 @@ export async function POST(request: Request) {
       user.created_at = user.created_at?.trim() ? user.created_at : now;
       user.updated_at = now;
 
+      processed += 1;
       items.push({
         user_id: user.user_id,
         login: user.login,
@@ -80,7 +105,11 @@ export async function POST(request: Request) {
 
     return json(auth.requestId, 200, {
       ok: true,
-      provisioned_count: items.length,
+      provisioned_count: processed,
+      processed,
+      migratedLegacy,
+      alreadyHashed,
+      skippedInactive,
       items,
     });
   } catch (error) {

@@ -3,8 +3,14 @@ import { NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME } from "@/lib/auth";
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from "@/lib/obs/requestId";
 import { signSession } from "@/lib/session";
-import { findUserByUsername, getRolesForUser, isStorageError, touchLastLoginAt } from "@/lib/server/controlModel";
-import { verifyPassword } from "@/lib/server/password";
+import {
+  findUserByUsername,
+  getRolesForUser,
+  isStorageError,
+  touchLastLoginAt,
+  updateUsersDirectoryRowsByUserId,
+} from "@/lib/server/controlModel";
+import { hashPassword, isProbablyHash, verifyPassword } from "@/lib/server/password";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status, headers: { [REQUEST_ID_HEADER]: requestId } });
@@ -37,7 +43,35 @@ export async function POST(request: Request) {
       });
     }
 
-    const validPassword = await verifyPassword(password, user.password_hash);
+    let validPassword = false;
+    const storedPasswordValue = user.password_hash ?? "";
+
+    if (isProbablyHash(storedPasswordValue)) {
+      validPassword = await verifyPassword(password, storedPasswordValue);
+    } else {
+      // legacy plaintext fallback (one-time migration)
+      validPassword = password === storedPasswordValue;
+      if (validPassword) {
+        const nowIso = new Date().toISOString();
+        const migratedHash = await hashPassword(password);
+
+        await updateUsersDirectoryRowsByUserId([
+          {
+            user_id: user.user_id,
+            update: {
+              password_hash: migratedHash,
+              must_change_password: true,
+              updated_at: nowIso,
+              last_login_at: nowIso,
+            },
+          },
+        ]);
+
+        user.password_hash = migratedHash;
+        user.must_change_password = true;
+      }
+    }
+
     if (!validPassword) {
       return json(requestId, 401, {
         ok: false,

@@ -2,6 +2,16 @@ import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
 
 const PREFIX = "scrypt";
 const TEMP_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*()-_=+";
+const HASH_PREFIX = `${PREFIX}$`;
+
+export function isProbablyHash(stored: string): boolean {
+  const value = stored.trim();
+  if (!value) {
+    return false;
+  }
+
+  return value.startsWith(HASH_PREFIX) && value.split("$").length === 4;
+}
 
 export async function hashPassword(plain: string, cost = 12): Promise<string> {
   const salt = randomBytes(16).toString("hex");
@@ -13,7 +23,7 @@ export async function hashPassword(plain: string, cost = 12): Promise<string> {
 
 export async function verifyPassword(plain: string, hash: string): Promise<boolean> {
   const [prefix, nRaw, salt, derivedHex] = hash.split("$");
-  if (prefix !== PREFIX || !nRaw || !salt || !derivedHex) {
+  if (!isProbablyHash(hash) || prefix !== PREFIX || !nRaw || !salt || !derivedHex) {
     return false;
   }
 
