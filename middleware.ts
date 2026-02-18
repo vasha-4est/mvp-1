@@ -7,48 +7,73 @@ const INTERNAL_LOGIN_PATH = "/api/auth/login";
 const INTERNAL_LOGOUT_PATH = "/api/auth/logout";
 const INTERNAL_ME_PATH = "/api/auth/me";
 
+type SessionSummary = {
+  roles: string[];
+  exp: number | null;
+};
+
 function jsonError(status: 401 | 403, code: "UNAUTHORIZED" | "FORBIDDEN") {
   return NextResponse.json({ ok: false, code }, { status });
 }
 
-function decodeRolesFromUnsignedSessionPayload(token: string): string[] {
+function decodeSessionPayload(token: string): SessionSummary | null {
   const separator = token.indexOf(".");
   if (separator <= 0) {
-    return [];
+    return null;
   }
 
   const encodedPayload = token.slice(0, separator);
   if (!encodedPayload) {
-    return [];
+    return null;
   }
 
   try {
-    const decodedPayload =
-      typeof globalThis.atob === "function"
-        ? globalThis.atob(encodedPayload)
-        : Buffer.from(encodedPayload, "base64").toString("utf8");
-
+    const decodedPayload = globalThis.atob(encodedPayload);
     const parsed: unknown = JSON.parse(decodedPayload);
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      return [];
+      return null;
     }
+
+    const expValue = (parsed as { exp?: unknown }).exp;
+    const exp = typeof expValue === "number" && Number.isFinite(expValue) ? expValue : null;
 
     const role = (parsed as { role?: unknown }).role;
     if (typeof role === "string" && role.trim()) {
-      return [role.trim().toUpperCase()];
+      return { roles: [role.trim().toUpperCase()], exp };
     }
 
     const roles = (parsed as { roles?: unknown }).roles;
     if (!Array.isArray(roles)) {
-      return [];
+      return { roles: [], exp };
     }
 
-    return roles
-      .filter((item): item is string => typeof item === "string" && !!item.trim())
-      .map((item) => item.trim().toUpperCase());
+    return {
+      roles: roles
+        .filter((item): item is string => typeof item === "string" && !!item.trim())
+        .map((item) => item.trim().toUpperCase()),
+      exp,
+    };
   } catch {
-    return [];
+    return null;
   }
+}
+
+function isSessionProbablyValid(request: NextRequest): SessionSummary | null {
+  const sessionToken = request.cookies.get("session")?.value;
+  if (!sessionToken) {
+    return null;
+  }
+
+  const decoded = decodeSessionPayload(sessionToken);
+  if (!decoded) {
+    return null;
+  }
+
+  if (typeof decoded.exp === "number" && Date.now() >= decoded.exp * 1000) {
+    return null;
+  }
+
+  return decoded;
 }
 
 export function middleware(request: NextRequest) {
@@ -64,19 +89,36 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const sessionToken = request.cookies.get("session")?.value;
-  if (!sessionToken) {
-    return jsonError(401, "UNAUTHORIZED");
+  const session = isSessionProbablyValid(request);
+
+  if (pathname.startsWith("/owner")) {
+    if (!session) {
+      const loginUrl = new URL("/login", request.url);
+      loginUrl.searchParams.set("next", pathname);
+      return NextResponse.redirect(loginUrl);
+    }
+
+    if (!session.roles.includes("OWNER")) {
+      return NextResponse.rewrite(new URL("/403", request.url));
+    }
   }
 
-  const roles = decodeRolesFromUnsignedSessionPayload(sessionToken);
+  if (pathname.startsWith("/api/owner")) {
+    if (!session) {
+      return jsonError(401, "UNAUTHORIZED");
+    }
 
-  if (pathname.startsWith("/api/owner") && !roles.includes("OWNER")) {
-    return jsonError(403, "FORBIDDEN");
+    if (!session.roles.includes("OWNER")) {
+      return jsonError(403, "FORBIDDEN");
+    }
   }
 
   if (pathname.startsWith("/api/batch/") && pathname.endsWith("/status")) {
-    if (!roles.includes("OWNER") && !roles.includes("COO")) {
+    if (!session) {
+      return jsonError(401, "UNAUTHORIZED");
+    }
+
+    if (!session.roles.includes("OWNER") && !session.roles.includes("COO")) {
       return jsonError(403, "FORBIDDEN");
     }
   }
@@ -85,5 +127,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/api/:path*"],
+  matcher: ["/api/:path*", "/owner/:path*", "/owner"],
 };

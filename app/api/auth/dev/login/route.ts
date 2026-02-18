@@ -17,7 +17,12 @@ function json(requestId: string, status: number, body: Record<string, unknown>) 
   });
 }
 
-function extractRole(body: unknown): string | null {
+function extractRole(body: unknown, requestUrl: string): string | null {
+  const queryRole = new URL(requestUrl).searchParams.get("role");
+  if (typeof queryRole === "string" && queryRole.trim()) {
+    return queryRole.trim().toUpperCase();
+  }
+
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return null;
   }
@@ -44,11 +49,11 @@ export async function POST(request: Request) {
     body = null;
   }
 
-  const role = extractRole(body);
+  const role = extractRole(body, request.url);
   if (!role || !isAllowedRole(role)) {
     return json(requestId, 400, {
       ok: false,
-      error: "Field 'role' must be one of: OWNER, COO, VIEWER",
+      error: "Field 'role' must be one of: OWNER, COO, VIEWER, PROD_MASTER, PACKER, LOGISTICS",
       code: "VALIDATION_ERROR",
     });
   }

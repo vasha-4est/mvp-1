@@ -2,7 +2,7 @@ import { promises as fs } from "fs";
 import { randomUUID } from "crypto";
 import path from "path";
 
-export const ALLOWED_ROLES = ["OWNER", "COO", "VIEWER"] as const;
+export const ALLOWED_ROLES = ["OWNER", "COO", "VIEWER", "PROD_MASTER", "PACKER", "LOGISTICS"] as const;
 export type AllowedRole = (typeof ALLOWED_ROLES)[number];
 
 export type UserRecord = {
@@ -179,6 +179,8 @@ export async function createUser(params: {
   username: string;
   passwordHash: string;
   roles: AllowedRole[];
+  status?: "active" | "disabled";
+  notes?: string;
 }): Promise<{ user_id: string }> {
   const store = await readStore();
   const now = new Date().toISOString();
@@ -187,9 +189,9 @@ export async function createUser(params: {
 
   const user: UserRecord = {
     id: userId,
-    username: params.username.trim(),
+    username: params.username.trim().toLowerCase(),
     password_hash: params.passwordHash,
-    is_active: true,
+    is_active: params.status !== "disabled",
     created_at: now,
     updated_at: now,
     last_login_at: null,
@@ -251,7 +253,10 @@ export async function listUsers(params: {
   page: number;
   pageSize: number;
   username?: string;
-}): Promise<{ total: number; users: Array<{ id: string; username: string; is_active: boolean; roles: AllowedRole[] }> }> {
+}): Promise<{
+  total: number;
+  users: Array<{ id: string; username: string; is_active: boolean; roles: AllowedRole[]; last_login_at: string | null }>;
+}> {
   const store = await readStore();
   const filterValue = params.username?.trim().toLowerCase() ?? "";
 
@@ -274,12 +279,51 @@ export async function listUsers(params: {
       .filter((item) => item.user_id === user.id)
       .map((item) => item.role)
       .filter((role, index, arr) => arr.indexOf(role) === index),
+    last_login_at: user.last_login_at,
   }));
 
   return {
     total: filtered.length,
     users,
   };
+}
+
+export async function getUserById(userId: string): Promise<{
+  id: string;
+  username: string;
+  is_active: boolean;
+  roles: AllowedRole[];
+  last_login_at: string | null;
+} | null> {
+  const store = await readStore();
+  const user = store.users.find((item) => item.id === userId);
+  if (!user) {
+    return null;
+  }
+
+  return {
+    id: user.id,
+    username: user.username,
+    is_active: user.is_active,
+    roles: store.user_roles
+      .filter((item) => item.user_id === user.id)
+      .map((item) => item.role)
+      .filter((role, index, arr) => arr.indexOf(role) === index),
+    last_login_at: user.last_login_at,
+  };
+}
+
+export async function setUserStatusById(userId: string, status: "active" | "disabled"): Promise<boolean> {
+  const store = await readStore();
+  const user = store.users.find((item) => item.id === userId);
+  if (!user) {
+    return false;
+  }
+
+  user.is_active = status === "active";
+  user.updated_at = new Date().toISOString();
+  await writeStore(store);
+  return true;
 }
 
 export async function deactivateUser(userId: string): Promise<boolean> {

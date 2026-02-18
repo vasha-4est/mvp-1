@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { requireOwner } from "@/lib/server/guards";
-import { createUser, findUserByUsername, isStorageError, listUsers, normalizeRoleList } from "@/lib/server/controlModel";
+import {
+  createUser,
+  findUserByUsername,
+  isStorageError,
+  listUsers,
+  normalizeRoleList,
+} from "@/lib/server/controlModel";
 import { hashPassword } from "@/lib/server/password";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
@@ -25,25 +31,34 @@ export async function POST(request: Request) {
 
     const username =
       typeof (body as { username?: unknown })?.username === "string"
-        ? (body as { username: string }).username.trim()
+        ? (body as { username: string }).username.trim().toLowerCase()
         : "";
     const password =
       typeof (body as { password?: unknown })?.password === "string" ? (body as { password: string }).password : "";
     const roles = normalizeRoleList((body as { roles?: unknown })?.roles);
+    const status = (body as { status?: unknown })?.status === "disabled" ? "disabled" : "active";
+    const notes = typeof (body as { notes?: unknown })?.notes === "string" ? (body as { notes: string }).notes : "";
 
     if (!username || !password || !roles || roles.length === 0) {
-      return json(auth.requestId, 400, { ok: false, code: "VALIDATION_ERROR" });
+      return json(auth.requestId, 400, { ok: false, error: "Validation error", code: "VALIDATION_ERROR" });
     }
 
     const existing = await findUserByUsername(username);
     if (existing) {
-      return json(auth.requestId, 409, { ok: false, code: "USERNAME_EXISTS" });
+      return json(auth.requestId, 409, { ok: false, error: "Username exists", code: "USERNAME_EXISTS" });
     }
 
     const passwordHash = await hashPassword(password, 12);
-    const created = await createUser({ username, passwordHash, roles });
+    const created = await createUser({ username, passwordHash, roles, status, notes });
 
-    return json(auth.requestId, 201, { ok: true, user_id: created.user_id });
+    return json(auth.requestId, 201, {
+      ok: true,
+      data: {
+        user: {
+          user_id: created.user_id,
+        },
+      },
+    });
   } catch (error) {
     if (isStorageError(error)) {
       return json(auth.requestId, 500, { ok: false, error: "Storage error", code: "STORAGE_ERROR" });
