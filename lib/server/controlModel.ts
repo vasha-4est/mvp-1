@@ -23,54 +23,107 @@ export type UserRoleRecord = {
 };
 
 type ControlModelData = {
-  users_directory: UserRecord[];
-  users_roles: UserRoleRecord[];
+  users: UserRecord[];
+  user_roles: UserRoleRecord[];
 };
 
-const DEFAULT_STORE_FILE = path.join(process.cwd(), ".data", "control_model.json");
+type LegacyControlModelData = {
+  users_directory?: UserRecord[];
+  users_roles?: UserRoleRecord[];
+  users?: UserRecord[];
+  user_roles?: UserRoleRecord[];
+};
+
+const DEFAULT_STORE_FILE = "/tmp/control_model.json";
+
+export class StorageError extends Error {
+  constructor() {
+    super("Storage error");
+    this.name = "StorageError";
+  }
+}
+
+export function isStorageError(error: unknown): error is StorageError {
+  return error instanceof StorageError;
+}
 
 function storePath(): string {
   const fromEnv = process.env.CONTROL_MODEL_STORE_FILE;
   return fromEnv && fromEnv.trim() ? fromEnv.trim() : DEFAULT_STORE_FILE;
 }
 
-async function ensureStoreFile(): Promise<void> {
-  const filePath = storePath();
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-
+async function withStorageGuard<T>(operation: () => Promise<T>): Promise<T> {
   try {
-    await fs.access(filePath);
+    return await operation();
   } catch {
-    const empty: ControlModelData = {
-      users_directory: [],
-      users_roles: [],
-    };
-
-    await fs.writeFile(filePath, JSON.stringify(empty, null, 2), "utf8");
+    throw new StorageError();
   }
+}
+
+function emptyStore(): ControlModelData {
+  return {
+    users: [],
+    user_roles: [],
+  };
+}
+
+function normalizeStoreShape(parsed: unknown): ControlModelData {
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return emptyStore();
+  }
+
+  const typed = parsed as LegacyControlModelData;
+  const users = Array.isArray(typed.users)
+    ? typed.users
+    : Array.isArray(typed.users_directory)
+      ? typed.users_directory
+      : [];
+  const userRoles = Array.isArray(typed.user_roles)
+    ? typed.user_roles
+    : Array.isArray(typed.users_roles)
+      ? typed.users_roles
+      : [];
+
+  return {
+    users,
+    user_roles: userRoles,
+  };
+}
+
+async function ensureStoreFile(): Promise<void> {
+  await withStorageGuard(async () => {
+    const filePath = storePath();
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+
+    try {
+      await fs.access(filePath);
+      return;
+    } catch {
+      await fs.writeFile(filePath, JSON.stringify(emptyStore(), null, 2), "utf8");
+    }
+  });
 }
 
 async function readStore(): Promise<ControlModelData> {
   await ensureStoreFile();
-  const raw = await fs.readFile(storePath(), "utf8");
 
-  try {
-    const parsed = JSON.parse(raw) as ControlModelData;
-    return {
-      users_directory: Array.isArray(parsed.users_directory) ? parsed.users_directory : [],
-      users_roles: Array.isArray(parsed.users_roles) ? parsed.users_roles : [],
-    };
-  } catch {
-    return {
-      users_directory: [],
-      users_roles: [],
-    };
-  }
+  return withStorageGuard(async () => {
+    const raw = await fs.readFile(storePath(), "utf8");
+
+    try {
+      return normalizeStoreShape(JSON.parse(raw));
+    } catch {
+      return emptyStore();
+    }
+  });
 }
 
 async function writeStore(data: ControlModelData): Promise<void> {
   await ensureStoreFile();
-  await fs.writeFile(storePath(), JSON.stringify(data, null, 2), "utf8");
+
+  await withStorageGuard(async () => {
+    await fs.writeFile(storePath(), JSON.stringify(data, null, 2), "utf8");
+  });
 }
 
 function normalizeRole(role: string): AllowedRole | null {
@@ -98,18 +151,13 @@ export async function findUserByUsername(username: string): Promise<UserRecord |
   const lookup = username.trim().toLowerCase();
   const store = await readStore();
 
-  const user = store.users_directory.find((item) => item.username.trim().toLowerCase() === lookup);
+  const user = store.users.find((item) => item.username.trim().toLowerCase() === lookup);
   return user ?? null;
-}
-
-export async function findUserById(id: string): Promise<UserRecord | null> {
-  const store = await readStore();
-  return store.users_directory.find((item) => item.id === id) ?? null;
 }
 
 export async function getRolesForUser(userId: string): Promise<AllowedRole[]> {
   const store = await readStore();
-  return store.users_roles
+  return store.user_roles
     .filter((item) => item.user_id === userId)
     .map((item) => item.role)
     .filter((role, index, arr) => arr.indexOf(role) === index);
@@ -117,7 +165,7 @@ export async function getRolesForUser(userId: string): Promise<AllowedRole[]> {
 
 export async function touchLastLoginAt(userId: string, atIso: string): Promise<void> {
   const store = await readStore();
-  const user = store.users_directory.find((item) => item.id === userId);
+  const user = store.users.find((item) => item.id === userId);
   if (!user) {
     return;
   }
@@ -147,9 +195,9 @@ export async function createUser(params: {
     last_login_at: null,
   };
 
-  store.users_directory.push(user);
+  store.users.push(user);
   for (const role of params.roles) {
-    store.users_roles.push({
+    store.user_roles.push({
       id: randomUUID(),
       user_id: userId,
       role,
@@ -169,7 +217,7 @@ export async function updateUserById(
   }
 ): Promise<boolean> {
   const store = await readStore();
-  const user = store.users_directory.find((item) => item.id === userId);
+  const user = store.users.find((item) => item.id === userId);
 
   if (!user) {
     return false;
@@ -182,10 +230,10 @@ export async function updateUserById(
   }
 
   if (updates.roles) {
-    store.users_roles = store.users_roles.filter((item) => item.user_id !== userId);
+    store.user_roles = store.user_roles.filter((item) => item.user_id !== userId);
 
     for (const role of updates.roles) {
-      store.users_roles.push({
+      store.user_roles.push({
         id: randomUUID(),
         user_id: userId,
         role,
@@ -207,7 +255,7 @@ export async function listUsers(params: {
   const store = await readStore();
   const filterValue = params.username?.trim().toLowerCase() ?? "";
 
-  const filtered = store.users_directory.filter((user) => {
+  const filtered = store.users.filter((user) => {
     if (!filterValue) {
       return true;
     }
@@ -222,7 +270,7 @@ export async function listUsers(params: {
     id: user.id,
     username: user.username,
     is_active: user.is_active,
-    roles: store.users_roles
+    roles: store.user_roles
       .filter((item) => item.user_id === user.id)
       .map((item) => item.role)
       .filter((role, index, arr) => arr.indexOf(role) === index),
@@ -236,7 +284,7 @@ export async function listUsers(params: {
 
 export async function deactivateUser(userId: string): Promise<boolean> {
   const store = await readStore();
-  const user = store.users_directory.find((item) => item.id === userId);
+  const user = store.users.find((item) => item.id === userId);
 
   if (!user) {
     return false;

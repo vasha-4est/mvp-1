@@ -9,18 +9,23 @@ function json(requestId: string, status: number, body: Record<string, unknown>) 
 
 export async function GET(request: Request) {
   const requestId = getOrCreateRequestId(request);
-  const session = getSessionFromRequest(request);
 
-  if (!session) {
-    return json(requestId, 401, { ok: false, code: "UNAUTHORIZED" });
+  try {
+    const session = getSessionFromRequest(request);
+
+    if (!session) {
+      return json(requestId, 401, { ok: false, error: "Unauthorized", code: "UNAUTHORIZED" });
+    }
+
+    return json(requestId, 200, {
+      ok: true,
+      user: {
+        id: session.user_id,
+        login: session.username,
+        roles: session.roles,
+      },
+    });
+  } catch {
+    return json(requestId, 500, { ok: false, error: "Internal server error", code: "INTERNAL_ERROR" });
   }
-
-  return json(requestId, 200, {
-    ok: true,
-    user: {
-      user_id: session.user_id,
-      username: session.username,
-      roles: session.roles,
-    },
-  });
 }
