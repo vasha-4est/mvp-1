@@ -107,7 +107,7 @@ export async function POST(request: Request) {
     return response;
   } catch (error) {
     if (isStorageError(error)) {
-      return json(requestId, 500, { ok: false, error: "Storage error", code: "STORAGE_ERROR" });
+      return json(requestId, 503, { ok: false, error: "Control model unavailable", code: "CONTROL_MODEL_UNAVAILABLE" });
     }
 
     return json(requestId, 500, { ok: false, error: "Internal server error", code: "INTERNAL_ERROR" });
