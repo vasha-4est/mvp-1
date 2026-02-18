@@ -1,6 +1,6 @@
 /*
 Run in browser DevTools console on the same Preview origin.
-Checks owner session + provision/login behavior (200/401/503 JSON, never HTML 404/405).
+Checks owner session + debug payload for users_directory and provision behavior.
 */
 (async () => {
   const loginAsOwner = async () => {
@@ -23,10 +23,11 @@ Checks owner session + provision/login behavior (200/401/503 JSON, never HTML 40
 
   await loginAsOwner();
   await probe("/api/auth/me");
-  await probe("/api/auth/provision", { method: "POST" });
+  await probe("/api/owner/users?debug=1");
+  await probe("/api/auth/provision?debug=1", { method: "POST" });
 
-  // Optional internal login probe (wrong password -> 401 INVALID_CREDENTIALS,
-  // CONTROL_MODEL failure -> 503 CONTROL_MODEL_UNAVAILABLE)
+  // Optional login probe (wrong password -> 401 INVALID_CREDENTIALS,
+  // source unavailable -> 503 CONTROL_MODEL_UNAVAILABLE)
   // await probe("/api/auth/login", {
   //   method: "POST",
   //   headers: { "content-type": "application/json" },

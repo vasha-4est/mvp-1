@@ -10,7 +10,14 @@ import {
   writeUsersDirectoryRows,
   type UserRecord,
 } from "@/lib/server/controlModel";
-import { ControlModelUnavailableError, importUsersDirectoryFromGas, isGasUsersDirectoryConfigured } from "@/lib/server/controlModelGas";
+import {
+  ControlModelUnavailableError,
+  UsersDirectoryInvalidError,
+  UsersDirectoryNotFoundError,
+  importUsersDirectoryFromGas,
+  inspectUsersDirectoryFromGas,
+  isGasUsersDirectoryConfigured,
+} from "@/lib/server/controlModelGas";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status, headers: { [REQUEST_ID_HEADER]: requestId } });
@@ -32,6 +39,26 @@ function needsImportFromSheets(users: UserRecord[]): boolean {
   return users.some((user) => !user.user_id.trim() || !user.login.trim());
 }
 
+function errorResponse(requestId: string, error: unknown) {
+  if (error instanceof UsersDirectoryNotFoundError) {
+    return json(requestId, 503, { ok: false, code: "USERS_DIRECTORY_NOT_FOUND", error: "users_directory sheet not found" });
+  }
+
+  if (error instanceof UsersDirectoryInvalidError) {
+    return json(requestId, 503, { ok: false, code: "USERS_DIRECTORY_INVALID", error: "users_directory header invalid" });
+  }
+
+  if (isStorageError(error) || error instanceof ControlModelUnavailableError) {
+    return json(requestId, 503, {
+      ok: false,
+      error: "Control model unavailable",
+      code: "CONTROL_MODEL_UNAVAILABLE",
+    });
+  }
+
+  return json(requestId, 500, { ok: false, error: "Internal server error", code: "INTERNAL_ERROR" });
+}
+
 export async function POST(request: Request) {
   const auth = requireOwner(request);
   if (auth.ok === false) {
@@ -41,6 +68,8 @@ export async function POST(request: Request) {
   if (!isProvisioningEnabled()) {
     return json(auth.requestId, 403, { ok: false, code: "FORBIDDEN", error: "Provisioning disabled" });
   }
+
+  const debugEnabled = !isProductionAuthEnvironment() && new URL(request.url).searchParams.get("debug") === "1";
 
   try {
     let body: unknown = null;
@@ -56,10 +85,25 @@ export async function POST(request: Request) {
     await ensureUsersDirectoryColumns();
     let users = await getUsersDirectoryRows();
     let importedFromSheets = 0;
+    let source: "gas" | "json-store" | "none" = users.length > 0 ? "json-store" : "none";
+    let debugControlModel: Record<string, unknown> | undefined;
+
+    if (debugEnabled && isGasUsersDirectoryConfigured()) {
+      const gasDebug = await inspectUsersDirectoryFromGas(auth.requestId);
+      debugControlModel = {
+        source: gasDebug.source,
+        availableSheetNames: gasDebug.availableSheetNames,
+        usersDirectoryFound: gasDebug.usersDirectoryFound,
+        headerRow: gasDebug.headerRow,
+        previewRows: gasDebug.previewRows,
+        detectedColumnIndexes: gasDebug.detectedColumnIndexes,
+      };
+    }
 
     if (needsImportFromSheets(users) && isGasUsersDirectoryConfigured()) {
       const imported = await importUsersDirectoryFromGas(auth.requestId);
       importedFromSheets = imported.length;
+      source = imported.length > 0 ? "gas" : source;
 
       if (imported.length > 0) {
         const byUserId = new Map(users.map((item) => [item.user_id, item]));
@@ -141,16 +185,24 @@ export async function POST(request: Request) {
       alreadyHashed,
       skippedInactive,
       items,
+      ...(debugEnabled
+        ? {
+            debug: {
+              controlModel: {
+                source,
+                ...(debugControlModel ?? {
+                  availableSheetNames: [],
+                  usersDirectoryFound: source !== "none",
+                  headerRow: [],
+                  previewRows: [],
+                  detectedColumnIndexes: {},
+                }),
+              },
+            },
+          }
+        : {}),
     });
   } catch (error) {
-    if (isStorageError(error) || error instanceof ControlModelUnavailableError) {
-      return json(auth.requestId, 503, {
-        ok: false,
-        error: "Control model unavailable",
-        code: "CONTROL_MODEL_UNAVAILABLE",
-      });
-    }
-
-    return json(auth.requestId, 500, { ok: false, error: "Internal server error", code: "INTERNAL_ERROR" });
+    return errorResponse(auth.requestId, error);
   }
 }

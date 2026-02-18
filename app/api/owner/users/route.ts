@@ -1,13 +1,36 @@
 import { NextResponse } from "next/server";
 
+import { isProductionAuthEnvironment } from "@/lib/auth";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { requireOwner } from "@/lib/server/guards";
 import { createUser, findUserByUsername, isStorageError, listUsers, normalizeRoleList } from "@/lib/server/controlModel";
-import { isGasUsersDirectoryConfigured } from "@/lib/server/controlModelGas";
+import {
+  ControlModelUnavailableError,
+  UsersDirectoryInvalidError,
+  UsersDirectoryNotFoundError,
+  inspectUsersDirectoryFromGas,
+  isGasUsersDirectoryConfigured,
+} from "@/lib/server/controlModelGas";
 import { hashPassword } from "@/lib/server/password";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status, headers: { [REQUEST_ID_HEADER]: requestId } });
+}
+
+function errorResponse(requestId: string, error: unknown) {
+  if (error instanceof UsersDirectoryNotFoundError) {
+    return json(requestId, 503, { ok: false, code: "USERS_DIRECTORY_NOT_FOUND", error: "users_directory sheet not found" });
+  }
+
+  if (error instanceof UsersDirectoryInvalidError) {
+    return json(requestId, 503, { ok: false, code: "USERS_DIRECTORY_INVALID", error: "users_directory header invalid" });
+  }
+
+  if (isStorageError(error) || error instanceof ControlModelUnavailableError) {
+    return json(requestId, 503, { ok: false, code: "CONTROL_MODEL_UNAVAILABLE", error: "Control model unavailable" });
+  }
+
+  return json(requestId, 500, { ok: false, error: "Internal server error", code: "INTERNAL_ERROR" });
 }
 
 export async function POST(request: Request) {
@@ -46,11 +69,7 @@ export async function POST(request: Request) {
 
     return json(auth.requestId, 201, { ok: true, user_id: created.user_id });
   } catch (error) {
-    if (isStorageError(error)) {
-      return json(auth.requestId, 500, { ok: false, error: "Storage error", code: "STORAGE_ERROR" });
-    }
-
-    return json(auth.requestId, 500, { ok: false, error: "Internal server error", code: "INTERNAL_ERROR" });
+    return errorResponse(auth.requestId, error);
   }
 }
 
@@ -59,6 +78,8 @@ export async function GET(request: Request) {
   if (auth.ok === false) {
     return auth.response;
   }
+
+  const debugEnabled = !isProductionAuthEnvironment() && new URL(request.url).searchParams.get("debug") === "1";
 
   try {
     const url = new URL(request.url);
@@ -72,16 +93,37 @@ export async function GET(request: Request) {
       username,
     });
 
+    let debugControlModel: Record<string, unknown> | undefined;
+    if (debugEnabled) {
+      if (isGasUsersDirectoryConfigured()) {
+        const gasDebug = await inspectUsersDirectoryFromGas(auth.requestId);
+        debugControlModel = {
+          source: gasDebug.source,
+          availableSheetNames: gasDebug.availableSheetNames,
+          usersDirectoryFound: gasDebug.usersDirectoryFound,
+          headerRow: gasDebug.headerRow,
+          previewRows: gasDebug.previewRows,
+          detectedColumnIndexes: gasDebug.detectedColumnIndexes,
+        };
+      } else {
+        debugControlModel = {
+          source: data.total > 0 ? "json-store" : "none",
+          availableSheetNames: [],
+          usersDirectoryFound: data.total > 0,
+          headerRow: [],
+          previewRows: [],
+          detectedColumnIndexes: {},
+        };
+      }
+    }
+
     return json(auth.requestId, 200, {
       ok: true,
       data,
       ...(data.total === 0 && isGasUsersDirectoryConfigured() ? { warning: "NOT_PROVISIONED" } : {}),
+      ...(debugEnabled ? { debug: { controlModel: debugControlModel } } : {}),
     });
   } catch (error) {
-    if (isStorageError(error)) {
-      return json(auth.requestId, 500, { ok: false, error: "Storage error", code: "STORAGE_ERROR" });
-    }
-
-    return json(auth.requestId, 500, { ok: false, error: "Internal server error", code: "INTERNAL_ERROR" });
+    return errorResponse(auth.requestId, error);
   }
 }
