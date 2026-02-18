@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { requireOwner } from "@/lib/server/guards";
 import { createUser, findUserByUsername, isStorageError, listUsers, normalizeRoleList } from "@/lib/server/controlModel";
+import { isGasUsersDirectoryConfigured } from "@/lib/server/controlModelGas";
 import { hashPassword } from "@/lib/server/password";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
@@ -74,6 +75,7 @@ export async function GET(request: Request) {
     return json(auth.requestId, 200, {
       ok: true,
       data,
+      ...(data.total === 0 && isGasUsersDirectoryConfigured() ? { warning: "NOT_PROVISIONED" } : {}),
     });
   } catch (error) {
     if (isStorageError(error)) {

@@ -1,18 +1,35 @@
 /*
-Run in browser DevTools console after logging in as OWNER.
-Performs quick smoke checks for PR-43 fix flow.
+Run in browser DevTools console on the same Preview origin.
+Checks owner session + provision/login behavior (200/401/503 JSON, never HTML 404/405).
 */
 (async () => {
-  const me = await fetch('/api/auth/me', { credentials: 'include' });
-  const meBody = await me.json();
-  console.log('GET /api/auth/me', me.status, meBody);
+  const loginAsOwner = async () => {
+    const r = await fetch(`/api/auth/dev/login?role=OWNER`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "OWNER" }),
+    });
+    console.log("dev login", r.status, await r.text());
+  };
 
-  const provision = await fetch('/api/owner/users/provision', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ mode: 'missing_only' }),
-  });
-  const provisionBody = await provision.json();
-  console.log('POST /api/owner/users/provision', provision.status, provisionBody);
+  const probe = async (path, opts = {}) => {
+    const r = await fetch(path, { credentials: "include", ...opts });
+    const ct = r.headers.get("content-type") || "";
+    const body = ct.includes("application/json") ? await r.json() : await r.text();
+    console.log(path, "->", r.status, body);
+    return { status: r.status, body };
+  };
+
+  await loginAsOwner();
+  await probe("/api/auth/me");
+  await probe("/api/auth/provision", { method: "POST" });
+
+  // Optional internal login probe (wrong password -> 401 INVALID_CREDENTIALS,
+  // CONTROL_MODEL failure -> 503 CONTROL_MODEL_UNAVAILABLE)
+  // await probe("/api/auth/login", {
+  //   method: "POST",
+  //   headers: { "content-type": "application/json" },
+  //   body: JSON.stringify({ username: "nikolay", password: "wrong" }),
+  // });
 })();

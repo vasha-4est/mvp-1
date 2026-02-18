@@ -8,7 +8,9 @@ import {
   getUsersDirectoryRows,
   isStorageError,
   writeUsersDirectoryRows,
+  type UserRecord,
 } from "@/lib/server/controlModel";
+import { ControlModelUnavailableError, importUsersDirectoryFromGas, isGasUsersDirectoryConfigured } from "@/lib/server/controlModelGas";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status, headers: { [REQUEST_ID_HEADER]: requestId } });
@@ -20,6 +22,14 @@ function isProvisioningEnabled(): boolean {
   }
 
   return !isProductionAuthEnvironment();
+}
+
+function needsImportFromSheets(users: UserRecord[]): boolean {
+  if (users.length === 0) {
+    return true;
+  }
+
+  return users.some((user) => !user.user_id.trim() || !user.login.trim());
 }
 
 export async function POST(request: Request) {
@@ -44,7 +54,26 @@ export async function POST(request: Request) {
     const mode = rawMode === "reset_all" ? "reset_all" : rawMode === "missing_only" ? "missing_only" : "missing_only";
 
     await ensureUsersDirectoryColumns();
-    const users = await getUsersDirectoryRows();
+    let users = await getUsersDirectoryRows();
+    let importedFromSheets = 0;
+
+    if (needsImportFromSheets(users) && isGasUsersDirectoryConfigured()) {
+      const imported = await importUsersDirectoryFromGas(auth.requestId);
+      importedFromSheets = imported.length;
+
+      if (imported.length > 0) {
+        const byUserId = new Map(users.map((item) => [item.user_id, item]));
+        for (const row of imported) {
+          byUserId.set(row.user_id, {
+            ...row,
+            login: row.login.trim() || row.user_id,
+          });
+        }
+
+        users = Array.from(byUserId.values());
+      }
+    }
+
     const now = new Date().toISOString();
 
     let processed = 0;
@@ -55,17 +84,17 @@ export async function POST(request: Request) {
     const items: Array<{ user_id: string; login: string; temp_password: string; must_change_password: boolean }> = [];
 
     for (const user of users) {
+      user.login = user.login.trim() || user.user_id;
+
       if (!user.is_active || !user.login.trim()) {
         skippedInactive += 1;
         continue;
       }
 
       const hasHash = isProbablyHash(user.password_hash ?? "");
-      if (hasHash) {
-        if (mode === "missing_only") {
-          alreadyHashed += 1;
-          continue;
-        }
+      if (hasHash && mode === "missing_only") {
+        alreadyHashed += 1;
+        continue;
       }
 
       const hasLegacyPlaintext = !!user.password_hash.trim() && !hasHash;
@@ -78,7 +107,7 @@ export async function POST(request: Request) {
 
       let tempPassword = "";
       if (mode === "reset_all" || isMissing) {
-        tempPassword = generateTempPassword(user.login);
+        tempPassword = user.temp_password.trim() || generateTempPassword(user.login);
       } else if (hasLegacyPlaintext) {
         tempPassword = user.password_hash;
         migratedLegacy += 1;
@@ -107,13 +136,14 @@ export async function POST(request: Request) {
       ok: true,
       provisioned_count: processed,
       processed,
+      importedFromSheets,
       migratedLegacy,
       alreadyHashed,
       skippedInactive,
       items,
     });
   } catch (error) {
-    if (isStorageError(error)) {
+    if (isStorageError(error) || error instanceof ControlModelUnavailableError) {
       return json(auth.requestId, 503, {
         ok: false,
         error: "Control model unavailable",
