@@ -4,11 +4,16 @@ export type SessionPayload = {
   user_id: string;
   username: string;
   roles: string[];
+  must_change_password?: boolean;
   exp: number;
 };
 
 type LegacyPayload = {
   role?: string;
+  roles?: string[];
+  user_id?: string;
+  username?: string;
+  must_change_password?: boolean;
   exp?: number;
 };
 
@@ -98,17 +103,40 @@ export function verifySession(token: string): SessionPayload | null {
         user_id: userId,
         username: username,
         roles: normalizedRoles.filter((role, index, arr) => arr.indexOf(role) === index),
+        must_change_password: (payload as SessionPayload).must_change_password === true,
         exp,
       };
     }
   }
 
   const legacy = payload as LegacyPayload;
-  if (typeof legacy.role === "string" && legacy.role.trim()) {
+  if (
+    typeof legacy.user_id === "string" &&
+    legacy.user_id.trim() &&
+    typeof legacy.username === "string" &&
+    legacy.username.trim() &&
+    (typeof legacy.role === "string" || Array.isArray(legacy.roles))
+  ) {
+    const allRoles = Array.isArray(legacy.roles)
+      ? legacy.roles
+      : typeof legacy.role === "string"
+        ? [legacy.role]
+        : [];
+
+    const normalizedRoles = allRoles
+      .filter((role): role is string => typeof role === "string" && !!role.trim())
+      .map((role) => role.trim().toUpperCase())
+      .filter((role, index, arr) => arr.indexOf(role) === index);
+
+    if (normalizedRoles.length === 0) {
+      return null;
+    }
+
     return {
-      user_id: "legacy",
-      username: "legacy",
-      roles: [legacy.role.trim().toUpperCase()],
+      user_id: legacy.user_id,
+      username: legacy.username,
+      roles: normalizedRoles,
+      must_change_password: legacy.must_change_password === true,
       exp,
     };
   }

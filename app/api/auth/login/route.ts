@@ -50,17 +50,18 @@ export async function POST(request: Request) {
       return json(requestId, 403, { ok: false, error: "Account inactive", code: "ACCOUNT_INACTIVE" });
     }
 
-    const roles = await getRolesForUser(user.id);
+    const roles = await getRolesForUser(user.user_id);
     const now = new Date();
-    await touchLastLoginAt(user.id, now.toISOString());
+    await touchLastLoginAt(user.user_id, now.toISOString());
 
-    const response = json(requestId, 200, { ok: true, role: roles });
+    const response = json(requestId, 200, { ok: true, role: roles, must_change_password: user.must_change_password === true });
     response.cookies.set({
       name: SESSION_COOKIE_NAME,
       value: signSession({
-        user_id: user.id,
-        username: user.username,
+        user_id: user.user_id,
+        username: user.login,
         roles,
+        must_change_password: user.must_change_password === true,
         exp: Math.floor(now.getTime() / 1000) + 60 * 60 * 8,
       }),
       httpOnly: true,

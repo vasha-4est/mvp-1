@@ -55,7 +55,7 @@ export function isAllowedRole(role: unknown): role is AllowedRole {
   return typeof role === "string" && ALLOWED_ROLES.includes(role as AllowedRole);
 }
 
-export function getSessionFromRequest(request: Request): { user_id: string; username: string; roles: string[] } | null {
+export function getSessionFromRequest(request: Request): { user_id: string; username: string; roles: string[]; must_change_password: boolean } | null {
   const cookieHeader = request.headers.get("cookie") ?? "";
   if (!cookieHeader.trim()) {
     return null;
@@ -76,6 +76,7 @@ export function getSessionFromRequest(request: Request): { user_id: string; user
     user_id: verified.user_id,
     username: verified.username,
     roles: verified.roles.filter((role) => isAllowedRole(role)),
+    must_change_password: verified.must_change_password === true,
   };
 }
 

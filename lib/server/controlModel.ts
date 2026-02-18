@@ -5,14 +5,34 @@ import path from "path";
 export const ALLOWED_ROLES = ["OWNER", "COO", "VIEWER"] as const;
 export type AllowedRole = (typeof ALLOWED_ROLES)[number];
 
+const USERS_DIRECTORY_REQUIRED_COLUMNS = [
+  "user_id",
+  "login",
+  "password_hash",
+  "temp_password",
+  "must_change_password",
+  "is_active",
+  "created_at",
+  "updated_at",
+  "last_login_at",
+  "notes",
+  "display_name",
+] as const;
+
+export type UsersDirectoryRequiredColumn = (typeof USERS_DIRECTORY_REQUIRED_COLUMNS)[number];
+
 export type UserRecord = {
-  id: string;
-  username: string;
+  user_id: string;
+  login: string;
   password_hash: string;
+  temp_password: string;
+  must_change_password: boolean;
   is_active: boolean;
   created_at: string;
   updated_at: string;
   last_login_at: string | null;
+  notes: string;
+  display_name: string;
 };
 
 export type UserRoleRecord = {
@@ -23,15 +43,31 @@ export type UserRoleRecord = {
 };
 
 type ControlModelData = {
-  users: UserRecord[];
-  user_roles: UserRoleRecord[];
+  users_directory: UserRecord[];
+  users_roles: UserRoleRecord[];
+};
+
+type LegacyUserRecord = {
+  id?: unknown;
+  user_id?: unknown;
+  username?: unknown;
+  login?: unknown;
+  password_hash?: unknown;
+  temp_password?: unknown;
+  must_change_password?: unknown;
+  is_active?: unknown;
+  created_at?: unknown;
+  updated_at?: unknown;
+  last_login_at?: unknown;
+  notes?: unknown;
+  display_name?: unknown;
 };
 
 type LegacyControlModelData = {
-  users_directory?: UserRecord[];
-  users_roles?: UserRoleRecord[];
-  users?: UserRecord[];
-  user_roles?: UserRoleRecord[];
+  users_directory?: unknown;
+  users_roles?: unknown;
+  users?: unknown;
+  user_roles?: unknown;
 };
 
 const DEFAULT_STORE_FILE = "/tmp/control_model.json";
@@ -60,10 +96,82 @@ async function withStorageGuard<T>(operation: () => Promise<T>): Promise<T> {
   }
 }
 
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function asBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+
+  return fallback;
+}
+
+function normalizeUserRecord(input: LegacyUserRecord): UserRecord {
+  const now = nowIso();
+  const userId = asString(input.user_id).trim() || asString(input.id).trim() || randomUUID();
+  const login = asString(input.login).trim() || asString(input.username).trim();
+
+  return {
+    user_id: userId,
+    login,
+    password_hash: asString(input.password_hash).trim(),
+    temp_password: asString(input.temp_password),
+    must_change_password: asBoolean(input.must_change_password, false),
+    is_active: asBoolean(input.is_active, true),
+    created_at: asString(input.created_at).trim() || now,
+    updated_at: asString(input.updated_at).trim() || now,
+    last_login_at: asString(input.last_login_at).trim() || null,
+    notes: asString(input.notes),
+    display_name: asString(input.display_name),
+  };
+}
+
+function normalizeRole(role: string): AllowedRole | null {
+  const value = role.trim().toUpperCase();
+  if (ALLOWED_ROLES.includes(value as AllowedRole)) {
+    return value as AllowedRole;
+  }
+
+  return null;
+}
+
+function normalizeRoleRecord(input: unknown): UserRoleRecord | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return null;
+  }
+
+  const record = input as { id?: unknown; user_id?: unknown; role?: unknown; created_at?: unknown };
+  const role = typeof record.role === "string" ? normalizeRole(record.role) : null;
+  const userId = asString(record.user_id).trim();
+
+  if (!role || !userId) {
+    return null;
+  }
+
+  return {
+    id: asString(record.id).trim() || randomUUID(),
+    user_id: userId,
+    role,
+    created_at: asString(record.created_at).trim() || nowIso(),
+  };
+}
+
 function emptyStore(): ControlModelData {
   return {
-    users: [],
-    user_roles: [],
+    users_directory: [],
+    users_roles: [],
   };
 }
 
@@ -73,20 +181,22 @@ function normalizeStoreShape(parsed: unknown): ControlModelData {
   }
 
   const typed = parsed as LegacyControlModelData;
-  const users = Array.isArray(typed.users)
-    ? typed.users
-    : Array.isArray(typed.users_directory)
-      ? typed.users_directory
+  const usersRaw = Array.isArray(typed.users_directory)
+    ? typed.users_directory
+    : Array.isArray(typed.users)
+      ? typed.users
       : [];
-  const userRoles = Array.isArray(typed.user_roles)
-    ? typed.user_roles
-    : Array.isArray(typed.users_roles)
-      ? typed.users_roles
+  const rolesRaw = Array.isArray(typed.users_roles)
+    ? typed.users_roles
+    : Array.isArray(typed.user_roles)
+      ? typed.user_roles
       : [];
 
   return {
-    users,
-    user_roles: userRoles,
+    users_directory: usersRaw
+      .filter((item): item is LegacyUserRecord => typeof item === "object" && item !== null && !Array.isArray(item))
+      .map((item) => normalizeUserRecord(item)),
+    users_roles: rolesRaw.map((item) => normalizeRoleRecord(item)).filter((item): item is UserRoleRecord => item !== null),
   };
 }
 
@@ -126,15 +236,6 @@ async function writeStore(data: ControlModelData): Promise<void> {
   });
 }
 
-function normalizeRole(role: string): AllowedRole | null {
-  const value = role.trim().toUpperCase();
-  if (ALLOWED_ROLES.includes(value as AllowedRole)) {
-    return value as AllowedRole;
-  }
-
-  return null;
-}
-
 export function normalizeRoleList(roles: unknown): AllowedRole[] | null {
   if (!Array.isArray(roles)) {
     return null;
@@ -147,17 +248,66 @@ export function normalizeRoleList(roles: unknown): AllowedRole[] | null {
   return normalized.filter((role, index, arr) => arr.indexOf(role) === index);
 }
 
+export async function ensureUsersDirectoryColumns(): Promise<UsersDirectoryRequiredColumn[]> {
+  const store = await readStore();
+  for (let index = 0; index < store.users_directory.length; index += 1) {
+    store.users_directory[index] = normalizeUserRecord(store.users_directory[index]);
+  }
+  await writeStore(store);
+  return [...USERS_DIRECTORY_REQUIRED_COLUMNS];
+}
+
+export async function getUsersDirectoryRows(): Promise<UserRecord[]> {
+  const store = await readStore();
+  return store.users_directory.map((item) => normalizeUserRecord(item));
+}
+
+export async function writeUsersDirectoryRows(rows: UserRecord[]): Promise<void> {
+  const store = await readStore();
+  store.users_directory = rows.map((item) => normalizeUserRecord(item));
+  await writeStore(store);
+}
+
+export async function updateUsersDirectoryRowsByUserId(
+  updates: Array<{ user_id: string; update: Partial<UserRecord> }>
+): Promise<number> {
+  if (updates.length === 0) {
+    return 0;
+  }
+
+  const store = await readStore();
+  let changed = 0;
+
+  for (const update of updates) {
+    const row = store.users_directory.find((item) => item.user_id === update.user_id);
+    if (!row) {
+      continue;
+    }
+
+    Object.assign(row, update.update);
+    changed += 1;
+  }
+
+  await writeStore(store);
+  return changed;
+}
+
 export async function findUserByUsername(username: string): Promise<UserRecord | null> {
   const lookup = username.trim().toLowerCase();
   const store = await readStore();
 
-  const user = store.users.find((item) => item.username.trim().toLowerCase() === lookup);
+  const user = store.users_directory.find((item) => item.login.trim().toLowerCase() === lookup);
   return user ?? null;
+}
+
+export async function findUserById(userId: string): Promise<UserRecord | null> {
+  const store = await readStore();
+  return store.users_directory.find((item) => item.user_id === userId) ?? null;
 }
 
 export async function getRolesForUser(userId: string): Promise<AllowedRole[]> {
   const store = await readStore();
-  return store.user_roles
+  return store.users_roles
     .filter((item) => item.user_id === userId)
     .map((item) => item.role)
     .filter((role, index, arr) => arr.indexOf(role) === index);
@@ -165,7 +315,7 @@ export async function getRolesForUser(userId: string): Promise<AllowedRole[]> {
 
 export async function touchLastLoginAt(userId: string, atIso: string): Promise<void> {
   const store = await readStore();
-  const user = store.users.find((item) => item.id === userId);
+  const user = store.users_directory.find((item) => item.user_id === userId);
   if (!user) {
     return;
   }
@@ -181,23 +331,27 @@ export async function createUser(params: {
   roles: AllowedRole[];
 }): Promise<{ user_id: string }> {
   const store = await readStore();
-  const now = new Date().toISOString();
+  const now = nowIso();
 
   const userId = randomUUID();
 
   const user: UserRecord = {
-    id: userId,
-    username: params.username.trim(),
+    user_id: userId,
+    login: params.username.trim(),
     password_hash: params.passwordHash,
+    temp_password: "",
+    must_change_password: false,
     is_active: true,
     created_at: now,
     updated_at: now,
     last_login_at: null,
+    notes: "",
+    display_name: "",
   };
 
-  store.users.push(user);
+  store.users_directory.push(user);
   for (const role of params.roles) {
-    store.user_roles.push({
+    store.users_roles.push({
       id: randomUUID(),
       user_id: userId,
       role,
@@ -217,23 +371,23 @@ export async function updateUserById(
   }
 ): Promise<boolean> {
   const store = await readStore();
-  const user = store.users.find((item) => item.id === userId);
+  const user = store.users_directory.find((item) => item.user_id === userId);
 
   if (!user) {
     return false;
   }
 
-  const now = new Date().toISOString();
+  const now = nowIso();
 
   if (typeof updates.passwordHash === "string" && updates.passwordHash.trim()) {
     user.password_hash = updates.passwordHash;
   }
 
   if (updates.roles) {
-    store.user_roles = store.user_roles.filter((item) => item.user_id !== userId);
+    store.users_roles = store.users_roles.filter((item) => item.user_id !== userId);
 
     for (const role of updates.roles) {
-      store.user_roles.push({
+      store.users_roles.push({
         id: randomUUID(),
         user_id: userId,
         role,
@@ -255,23 +409,23 @@ export async function listUsers(params: {
   const store = await readStore();
   const filterValue = params.username?.trim().toLowerCase() ?? "";
 
-  const filtered = store.users.filter((user) => {
+  const filtered = store.users_directory.filter((user) => {
     if (!filterValue) {
       return true;
     }
 
-    return user.username.toLowerCase().includes(filterValue);
+    return user.login.toLowerCase().includes(filterValue);
   });
 
   const start = (params.page - 1) * params.pageSize;
   const end = start + params.pageSize;
 
   const users = filtered.slice(start, end).map((user) => ({
-    id: user.id,
-    username: user.username,
+    id: user.user_id,
+    username: user.login,
     is_active: user.is_active,
-    roles: store.user_roles
-      .filter((item) => item.user_id === user.id)
+    roles: store.users_roles
+      .filter((item) => item.user_id === user.user_id)
       .map((item) => item.role)
       .filter((role, index, arr) => arr.indexOf(role) === index),
   }));
@@ -284,14 +438,14 @@ export async function listUsers(params: {
 
 export async function deactivateUser(userId: string): Promise<boolean> {
   const store = await readStore();
-  const user = store.users.find((item) => item.id === userId);
+  const user = store.users_directory.find((item) => item.user_id === userId);
 
   if (!user) {
     return false;
   }
 
   user.is_active = false;
-  user.updated_at = new Date().toISOString();
+  user.updated_at = nowIso();
   await writeStore(store);
   return true;
 }

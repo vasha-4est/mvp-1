@@ -23,6 +23,7 @@ export async function GET(request: Request) {
         id: session.user_id,
         login: session.username,
         roles: session.roles,
+        must_change_password: session.must_change_password === true,
       },
     });
   } catch {
