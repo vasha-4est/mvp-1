@@ -23,13 +23,7 @@ export async function GET(request: Request, { params }: { params: { id: string }
     return json(auth.requestId, 200, {
       ok: true,
       data: {
-        user: {
-          user_id: user.id,
-          username: user.username,
-          status: user.is_active ? "active" : "disabled",
-          roles: user.roles,
-          last_login_at: user.last_login_at,
-        },
+        user,
       },
     });
   } catch (error) {
@@ -57,6 +51,7 @@ export async function PATCH(request: Request, { params }: { params: { id: string
 
     const rawRoles = (body as { roles?: unknown })?.roles;
     const roles = typeof rawRoles === "undefined" ? undefined : normalizeRoleList(rawRoles);
+    const notes = typeof (body as { notes?: unknown })?.notes === "string" ? (body as { notes: string }).notes : undefined;
 
     if (typeof rawRoles !== "undefined" && (!roles || roles.length === 0)) {
       return json(auth.requestId, 400, { ok: false, error: "Validation error", code: "VALIDATION_ERROR" });
@@ -64,6 +59,7 @@ export async function PATCH(request: Request, { params }: { params: { id: string
 
     const ok = await updateUserById(params.id, {
       roles,
+      notes,
     });
 
     if (!ok) {

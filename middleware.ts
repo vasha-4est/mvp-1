@@ -6,14 +6,37 @@ const LOGOUT_PATH = "/api/auth/dev/logout";
 const INTERNAL_LOGIN_PATH = "/api/auth/login";
 const INTERNAL_LOGOUT_PATH = "/api/auth/logout";
 const INTERNAL_ME_PATH = "/api/auth/me";
+const REQUEST_ID_HEADER = "x-request-id";
 
 type SessionSummary = {
   roles: string[];
   exp: number | null;
 };
 
-function jsonError(status: 401 | 403, code: "UNAUTHORIZED" | "FORBIDDEN") {
-  return NextResponse.json({ ok: false, code }, { status });
+function getRequestId(request: NextRequest): string {
+  const existing = request.headers.get(REQUEST_ID_HEADER);
+  if (existing && existing.trim()) {
+    return existing;
+  }
+
+  return crypto.randomUUID();
+}
+
+function jsonError(
+  requestId: string,
+  status: 401 | 403,
+  code: "UNAUTHORIZED" | "FORBIDDEN",
+  error: "Unauthorized" | "Forbidden"
+) {
+  return NextResponse.json(
+    { ok: false, error, code },
+    {
+      status,
+      headers: {
+        [REQUEST_ID_HEADER]: requestId,
+      },
+    }
+  );
 }
 
 function decodeSessionPayload(token: string): SessionSummary | null {
@@ -89,6 +112,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  const requestId = getRequestId(request);
   const session = isSessionProbablyValid(request);
 
   if (pathname.startsWith("/owner")) {
@@ -105,21 +129,21 @@ export function middleware(request: NextRequest) {
 
   if (pathname.startsWith("/api/owner")) {
     if (!session) {
-      return jsonError(401, "UNAUTHORIZED");
+      return jsonError(requestId, 401, "UNAUTHORIZED", "Unauthorized");
     }
 
     if (!session.roles.includes("OWNER")) {
-      return jsonError(403, "FORBIDDEN");
+      return jsonError(requestId, 403, "FORBIDDEN", "Forbidden");
     }
   }
 
   if (pathname.startsWith("/api/batch/") && pathname.endsWith("/status")) {
     if (!session) {
-      return jsonError(401, "UNAUTHORIZED");
+      return jsonError(requestId, 401, "UNAUTHORIZED", "Unauthorized");
     }
 
     if (!session.roles.includes("OWNER") && !session.roles.includes("COO")) {
-      return jsonError(403, "FORBIDDEN");
+      return jsonError(requestId, 403, "FORBIDDEN", "Forbidden");
     }
   }
 

@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME } from "@/lib/auth";
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from "@/lib/obs/requestId";
 import { signSession } from "@/lib/session";
-import { findUserByUsername, getRolesForUser, isStorageError, touchLastLoginAt } from "@/lib/server/controlModel";
+import { findUserByLogin, getRolesForUser, isStorageError, touchLastLoginAt } from "@/lib/server/controlModel";
 import { verifyPassword } from "@/lib/server/password";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
@@ -21,15 +21,12 @@ export async function POST(request: Request) {
       body = null;
     }
 
-    const username =
-      typeof (body as { username?: unknown })?.username === "string"
-        ? (body as { username: string }).username.trim()
-        : "";
+    const login = typeof (body as { username?: unknown })?.username === "string" ? (body as { username: string }).username.trim() : "";
     const password =
       typeof (body as { password?: unknown })?.password === "string" ? (body as { password: string }).password : "";
 
-    const user = username ? await findUserByUsername(username) : null;
-    if (!user) {
+    const user = login ? await findUserByLogin(login) : null;
+    if (!user || !user.password_hash) {
       return json(requestId, 401, {
         ok: false,
         error: "Invalid username or password",
@@ -50,16 +47,16 @@ export async function POST(request: Request) {
       return json(requestId, 403, { ok: false, error: "Account inactive", code: "ACCOUNT_INACTIVE" });
     }
 
-    const roles = await getRolesForUser(user.id);
+    const roles = await getRolesForUser(user.user_id);
     const now = new Date();
-    await touchLastLoginAt(user.id, now.toISOString());
+    await touchLastLoginAt(user.user_id, now.toISOString());
 
     const response = json(requestId, 200, { ok: true, role: roles });
     response.cookies.set({
       name: SESSION_COOKIE_NAME,
       value: signSession({
-        user_id: user.id,
-        username: user.username,
+        user_id: user.user_id,
+        username: user.login,
         roles,
         exp: Math.floor(now.getTime() / 1000) + 60 * 60 * 8,
       }),

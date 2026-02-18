@@ -4,7 +4,7 @@ import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { requireOwner } from "@/lib/server/guards";
 import {
   createUser,
-  findUserByUsername,
+  findUserByLogin,
   isStorageError,
   listUsers,
   normalizeRoleList,
@@ -29,27 +29,25 @@ export async function POST(request: Request) {
       body = null;
     }
 
-    const username =
-      typeof (body as { username?: unknown })?.username === "string"
-        ? (body as { username: string }).username.trim().toLowerCase()
-        : "";
+    const login = typeof (body as { username?: unknown })?.username === "string" ? (body as { username: string }).username.trim().toLowerCase() : "";
     const password =
       typeof (body as { password?: unknown })?.password === "string" ? (body as { password: string }).password : "";
     const roles = normalizeRoleList((body as { roles?: unknown })?.roles);
     const status = (body as { status?: unknown })?.status === "disabled" ? "disabled" : "active";
     const notes = typeof (body as { notes?: unknown })?.notes === "string" ? (body as { notes: string }).notes : "";
+    const displayName = typeof (body as { display_name?: unknown })?.display_name === "string" ? (body as { display_name: string }).display_name : "";
 
-    if (!username || !password || !roles || roles.length === 0) {
+    if (!login || !password || !roles || roles.length === 0) {
       return json(auth.requestId, 400, { ok: false, error: "Validation error", code: "VALIDATION_ERROR" });
     }
 
-    const existing = await findUserByUsername(username);
+    const existing = await findUserByLogin(login);
     if (existing) {
-      return json(auth.requestId, 409, { ok: false, error: "Username exists", code: "USERNAME_EXISTS" });
+      return json(auth.requestId, 409, { ok: false, error: "Login exists", code: "LOGIN_EXISTS" });
     }
 
     const passwordHash = await hashPassword(password, 12);
-    const created = await createUser({ username, passwordHash, roles, status, notes });
+    const created = await createUser({ login, passwordHash, roles, status, notes, displayName });
 
     return json(auth.requestId, 201, {
       ok: true,
@@ -78,12 +76,12 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const page = Number(url.searchParams.get("page") ?? "1");
     const pageSize = Number(url.searchParams.get("pageSize") ?? "20");
-    const username = url.searchParams.get("username") ?? undefined;
+    const login = url.searchParams.get("username") ?? undefined;
 
     const data = await listUsers({
       page: Number.isFinite(page) && page > 0 ? page : 1,
       pageSize: Number.isFinite(pageSize) && pageSize > 0 ? Math.min(pageSize, 100) : 20,
-      username,
+      login,
     });
 
     return json(auth.requestId, 200, {

@@ -36,3 +36,8 @@ All project scaffolding docs are in [`/docs`](./docs):
 - [Screens](./docs/SCREENS.md)
 - [Data model](./docs/DATA_MODEL.md)
 - [Integrations](./docs/INTEGRATIONS.md)
+
+## Internal users: accounts vs roles
+- `CONTROL_MODEL / users_directory` is the account system (login, password_hash, active flag, timestamps, notes/display_name).
+- `CONTROL_MODEL / users_roles` remains the authorization system (multi-role assignments per `user_id`).
+- Owner reset-password flow returns a one-time `temp_password` in API response only; this temporary plaintext password is **never** stored in sheets.

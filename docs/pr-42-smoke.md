@@ -75,7 +75,7 @@
     // 5) fetch user details
     const getUser = await j(`${BASE}/api/owner/users/${encodeURIComponent(createdId)}`);
     ok(getUser.status === 200, "get user -> 200", {status:getUser.status});
-    ok((getUser.data?.data?.user?.username || "").includes(uname), "username matches", {username:getUser.data?.data?.user?.username});
+    ok((getUser.data?.data?.user?.login || "").includes(uname), "login matches", {login:getUser.data?.data?.user?.login});
 
     // 6) disable user
     const disableUser = await j(`${BASE}/api/owner/users/${encodeURIComponent(createdId)}/status`, {
@@ -86,12 +86,11 @@
     ok([200,204].includes(disableUser.status), "disable user -> 200/204", {status:disableUser.status});
 
     // 7) reset password
-    const resetPwd = await j(`${BASE}/api/owner/users/${encodeURIComponent(createdId)}/password`, {
+    const resetPwd = await j(`${BASE}/api/owner/users/${encodeURIComponent(createdId)}/reset-password`, {
       method: "POST",
-      headers: { "content-type":"application/json" },
-      body: JSON.stringify({ password: "NewPassw0rd!456" }),
     });
     ok([200,204].includes(resetPwd.status), "reset password -> 200/204", {status:resetPwd.status});
+    ok(typeof resetPwd.data?.data?.temp_password === "string" || resetPwd.status===204, "temp_password returned", {temp: resetPwd.data?.data?.temp_password});
   } else {
     console.log("ℹ️ create user endpoint not present or did not return id; skipping user mutation steps.");
   }

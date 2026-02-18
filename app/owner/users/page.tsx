@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 type UserItem = {
-  id: string;
-  username: string;
+  user_id: string;
+  login: string;
   is_active: boolean;
   roles: string[];
   last_login_at: string | null;
@@ -15,6 +15,7 @@ export default function OwnerUsersPage() {
   const [users, setUsers] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tempPassword, setTempPassword] = useState<{ userId: string; value: string } | null>(null);
 
   async function loadUsers() {
     setLoading(true);
@@ -34,7 +35,7 @@ export default function OwnerUsersPage() {
 
   async function toggleStatus(user: UserItem) {
     const nextStatus = user.is_active ? "disabled" : "active";
-    const response = await fetch(`/api/owner/users/${encodeURIComponent(user.id)}/status`, {
+    const response = await fetch(`/api/owner/users/${encodeURIComponent(user.user_id)}/status`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ status: nextStatus }),
@@ -46,7 +47,7 @@ export default function OwnerUsersPage() {
 
     setUsers((prev) =>
       prev.map((item) =>
-        item.id === user.id
+        item.user_id === user.user_id
           ? {
               ...item,
               is_active: !user.is_active,
@@ -54,6 +55,23 @@ export default function OwnerUsersPage() {
           : item
       )
     );
+  }
+
+  async function resetPassword(user: UserItem) {
+    const response = await fetch(`/api/owner/users/${encodeURIComponent(user.user_id)}/reset-password`, {
+      method: "POST",
+    });
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok || !payload?.ok) {
+      setError(payload?.error || "Failed to set/reset password");
+      return;
+    }
+
+    const value = payload?.data?.temp_password;
+    if (typeof value === "string") {
+      setTempPassword({ userId: user.user_id, value });
+    }
   }
 
   useEffect(() => {
@@ -66,6 +84,12 @@ export default function OwnerUsersPage() {
       <p>
         <Link href="/owner/users/new">Add user</Link>
       </p>
+
+      {tempPassword ? (
+        <p style={{ padding: 8, border: "1px solid #f5c542", background: "#fff9e6" }}>
+          Temporary password for <b>{tempPassword.userId}</b>: <code>{tempPassword.value}</code>
+        </p>
+      ) : null}
 
       {loading ? <p>Loading...</p> : null}
       {error ? <p role="alert">{error}</p> : null}
@@ -83,19 +107,18 @@ export default function OwnerUsersPage() {
           </thead>
           <tbody>
             {users.map((user) => (
-              <tr key={user.id}>
-                <td>{user.username}</td>
+              <tr key={user.user_id}>
+                <td>{user.login}</td>
                 <td>{user.is_active ? "active" : "disabled"}</td>
                 <td>{user.roles.join(", ") || "—"}</td>
                 <td>{user.last_login_at || "—"}</td>
                 <td style={{ display: "flex", gap: 8 }}>
-                  <Link href={`/owner/users/${encodeURIComponent(user.id)}`}>Edit</Link>
-                  <button
-                    type="button"
-                    onClick={() => void toggleStatus(user)}
-                    style={{ cursor: "pointer" }}
-                  >
+                  <Link href={`/owner/users/${encodeURIComponent(user.user_id)}`}>Edit</Link>
+                  <button type="button" onClick={() => void toggleStatus(user)} style={{ cursor: "pointer" }}>
                     {user.is_active ? "Disable" : "Enable"}
+                  </button>
+                  <button type="button" onClick={() => void resetPassword(user)} style={{ cursor: "pointer" }}>
+                    Set/Reset password
                   </button>
                 </td>
               </tr>

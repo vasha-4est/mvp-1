@@ -7,10 +7,11 @@ const ROLE_OPTIONS = ["OWNER", "COO", "VIEWER", "PROD_MASTER", "PACKER", "LOGIST
 
 type UserDetails = {
   user_id: string;
-  username: string;
-  status: "active" | "disabled";
+  login: string;
+  is_active: boolean;
   roles: string[];
   last_login_at: string | null;
+  notes: string;
 };
 
 export default function OwnerUserDetailsPage() {
@@ -20,7 +21,6 @@ export default function OwnerUserDetailsPage() {
   const [user, setUser] = useState<UserDetails | null>(null);
   const [roles, setRoles] = useState<string[]>([]);
   const [status, setStatus] = useState<"active" | "disabled">("active");
-  const [password, setPassword] = useState("");
   const [notes, setNotes] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +40,8 @@ export default function OwnerUserDetailsPage() {
     const loaded = payload.data.user as UserDetails;
     setUser(loaded);
     setRoles(Array.isArray(loaded.roles) ? loaded.roles : []);
-    setStatus(loaded.status);
+    setStatus(loaded.is_active ? "active" : "disabled");
+    setNotes(loaded.notes || "");
     setError(null);
   }
 
@@ -81,10 +82,8 @@ export default function OwnerUserDetailsPage() {
     setMessage(null);
     setError(null);
 
-    const response = await fetch(`/api/owner/users/${encodeURIComponent(userId)}/password`, {
+    const response = await fetch(`/api/owner/users/${encodeURIComponent(userId)}/reset-password`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password }),
     });
     const payload = await response.json().catch(() => null);
 
@@ -93,8 +92,7 @@ export default function OwnerUserDetailsPage() {
       return;
     }
 
-    setPassword("");
-    setMessage("Password reset.");
+    setMessage(`Password reset. Temporary password: ${payload?.data?.temp_password || "(hidden)"}`);
   }
 
   useEffect(() => {
@@ -108,7 +106,7 @@ export default function OwnerUserDetailsPage() {
       <h1>Edit user</h1>
       {user ? (
         <p>
-          {user.username} ({user.user_id}) — last login: {user.last_login_at || "—"}
+          {user.login} ({user.user_id}) — last login: {user.last_login_at || "—"}
         </p>
       ) : null}
       {error ? (
@@ -152,20 +150,9 @@ export default function OwnerUserDetailsPage() {
       </form>
 
       <section style={{ marginTop: 24, display: "grid", gap: 8 }}>
-        <h2>Reset password</h2>
-        <input
-          type="password"
-          placeholder="New password"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-        />
-        <button
-          type="button"
-          onClick={() => void resetPassword()}
-          disabled={!password.trim()}
-          style={{ opacity: !password.trim() ? 0.6 : 1, cursor: !password.trim() ? "not-allowed" : "pointer" }}
-        >
-          Reset password
+        <h2>Set/Reset password</h2>
+        <button type="button" onClick={() => void resetPassword()} style={{ cursor: "pointer" }}>
+          Generate temporary password
         </button>
       </section>
     </main>
