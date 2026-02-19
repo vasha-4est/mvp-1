@@ -2,6 +2,9 @@ import { promises as fs } from "fs";
 import { randomUUID } from "crypto";
 import path from "path";
 
+import { hashPassword } from "@/lib/server/password";
+import { readUsersDirectoryFromGas, writeUsersDirectoryHashes } from "@/lib/server/usersDirectory";
+
 export const ALLOWED_ROLES = ["OWNER", "COO", "VIEWER"] as const;
 export type AllowedRole = (typeof ALLOWED_ROLES)[number];
 
@@ -277,11 +280,56 @@ export async function updateUserById(
   return true;
 }
 
+function parseBool(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+
+  return !(normalized === "false" || normalized === "0" || normalized === "no");
+}
+
+function parseRoles(value: string): AllowedRole[] {
+  return value
+    .split(/[|,]/)
+    .map((item) => normalizeRole(item))
+    .filter((item): item is AllowedRole => item !== null)
+    .filter((role, index, arr) => arr.indexOf(role) === index);
+}
+
+function isPasswordHash(value: string): boolean {
+  return value.startsWith("scrypt$");
+}
+
 export async function listUsers(params: {
   page: number;
   pageSize: number;
   username?: string;
 }): Promise<{ total: number; users: Array<{ id: string; username: string; is_active: boolean; roles: AllowedRole[] }> }> {
+  const requestId = randomUUID();
+  const source = process.env.GAS_WEBAPP_URL ? await readUsersDirectoryFromGas(requestId) : null;
+
+  if (source) {
+    const filterValue = params.username?.trim().toLowerCase() ?? "";
+    const mapped = source.users
+      .map((user) => ({
+        id: user.id,
+        username: user.username,
+        is_active: parseBool(user.is_active),
+        roles: parseRoles(user.roles),
+      }))
+      .filter((user) => user.id && user.username)
+      .filter((user) => (filterValue ? user.username.toLowerCase().includes(filterValue) : true));
+
+    const start = (params.page - 1) * params.pageSize;
+    const end = start + params.pageSize;
+
+    return {
+      total: mapped.length,
+      users: mapped.slice(start, end),
+    };
+  }
+
   const store = await readStore();
   const filterValue = params.username?.trim().toLowerCase() ?? "";
 
@@ -312,47 +360,121 @@ export async function listUsers(params: {
   };
 }
 
-
-function isPasswordHash(value: string): boolean {
-  return value.startsWith("scrypt$");
-}
-
 export async function provisionUsers(): Promise<{
   provisioned_count: number;
   processed: number;
   migratedLegacy: number;
   alreadyHashed: number;
   skippedInactive: number;
-  items: Array<{ id: string; username: string; status: "already_hashed" | "skipped_inactive" | "legacy_pending" }>;
+  skippedNoPassword: number;
+  items: Array<{ id: string; username: string; status: "already_hashed" | "skipped_inactive" | "legacy_pending" | "skipped_no_password" | "provisioned" }>;
 }> {
+  if (!process.env.GAS_WEBAPP_URL) {
+    const store = await readStore();
+    return {
+      provisioned_count: 0,
+      processed: store.users.length,
+      migratedLegacy: 0,
+      alreadyHashed: 0,
+      skippedInactive: 0,
+      skippedNoPassword: store.users.length,
+      items: store.users.map((user) => ({ id: user.id, username: user.username, status: "skipped_no_password" })),
+    };
+  }
+
+  const requestId = randomUUID();
+  const source = await readUsersDirectoryFromGas(requestId);
   const store = await readStore();
-  const items: Array<{ id: string; username: string; status: "already_hashed" | "skipped_inactive" | "legacy_pending" }> = [];
+  const items: Array<{ id: string; username: string; status: "already_hashed" | "skipped_inactive" | "legacy_pending" | "skipped_no_password" | "provisioned" }> = [];
+
   let migratedLegacy = 0;
   let alreadyHashed = 0;
   let skippedInactive = 0;
+  let skippedNoPassword = 0;
 
-  for (const user of store.users) {
-    if (!user.is_active) {
+  const hashUpdates: Array<{ id: string; password_hash: string }> = [];
+
+  for (const row of source.users) {
+    const id = row.id.trim();
+    const username = row.username.trim();
+    if (!id || !username) {
+      continue;
+    }
+
+    const isActive = parseBool(row.is_active);
+    if (!isActive) {
       skippedInactive += 1;
-      items.push({ id: user.id, username: user.username, status: "skipped_inactive" });
+      items.push({ id, username, status: "skipped_inactive" });
       continue;
     }
 
-    if (isPasswordHash(user.password_hash)) {
+    const existingHash = row.password_hash.trim();
+    const passwordPlain = row.password.trim();
+
+    if (existingHash && isPasswordHash(existingHash)) {
       alreadyHashed += 1;
-      items.push({ id: user.id, username: user.username, status: "already_hashed" });
+      items.push({ id, username, status: "already_hashed" });
+    } else if (passwordPlain) {
+      const hashed = await hashPassword(passwordPlain, 12);
+      hashUpdates.push({ id, password_hash: hashed });
+      migratedLegacy += 1;
+      items.push({ id, username, status: "provisioned" });
+    } else {
+      skippedNoPassword += 1;
+      items.push({ id, username, status: "skipped_no_password" });
       continue;
     }
 
-    items.push({ id: user.id, username: user.username, status: "legacy_pending" });
+    const now = new Date().toISOString();
+    const hashToStore = existingHash && isPasswordHash(existingHash) ? existingHash : hashUpdates[hashUpdates.length - 1]?.password_hash;
+    if (!hashToStore) {
+      continue;
+    }
+
+    const existingUser = store.users.find((user) => user.id === id || user.username.trim().toLowerCase() === username.toLowerCase());
+    if (existingUser) {
+      existingUser.id = id;
+      existingUser.username = username;
+      existingUser.password_hash = hashToStore;
+      existingUser.is_active = isActive;
+      existingUser.updated_at = now;
+    } else {
+      store.users.push({
+        id,
+        username,
+        password_hash: hashToStore,
+        is_active: isActive,
+        created_at: now,
+        updated_at: now,
+        last_login_at: null,
+      });
+    }
+
+    const roles = parseRoles(row.roles);
+    store.user_roles = store.user_roles.filter((entry) => entry.user_id !== id);
+    for (const role of roles) {
+      store.user_roles.push({
+        id: randomUUID(),
+        user_id: id,
+        role,
+        created_at: now,
+      });
+    }
   }
+
+  if (hashUpdates.length > 0) {
+    await writeUsersDirectoryHashes(requestId, hashUpdates);
+  }
+
+  await writeStore(store);
 
   return {
     provisioned_count: migratedLegacy,
-    processed: store.users.length,
+    processed: source.users.length,
     migratedLegacy,
     alreadyHashed,
     skippedInactive,
+    skippedNoPassword,
     items,
   };
 }

@@ -4,6 +4,7 @@ import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { createUser, findUserByUsername, getControlModelStoreDiagnostics, isStorageError, listUsers, normalizeRoleList } from "@/lib/server/controlModel";
 import { requireOwner } from "@/lib/server/guards";
 import { hashPassword } from "@/lib/server/password";
+import { readUsersDirectoryFromGas } from "@/lib/server/usersDirectory";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status, headers: { [REQUEST_ID_HEADER]: requestId } });
@@ -13,16 +14,41 @@ function includeDebug(url: URL) {
   return url.searchParams.get("debug") === "1";
 }
 
-function ownerUsersDebug(error?: string) {
+async function ownerUsersDebug(error?: string) {
+  let sheets: Record<string, unknown> = { tried: false };
+
+  if (process.env.GAS_WEBAPP_URL) {
+    try {
+      const source = await readUsersDirectoryFromGas("owner-users-debug");
+      sheets = {
+        users_directory_found: source.debug.users_directory_found,
+        available_sheet_names: source.debug.available_sheet_names,
+        header_row_index: source.debug.header_row_index,
+        header_row_values: source.debug.header_row_values,
+        headers_seen: source.debug.headers_seen,
+        missing_required: source.debug.missing_required,
+        header_ok: source.debug.header_ok,
+      };
+    } catch {
+      sheets = {
+        users_directory_found: false,
+        available_sheet_names: [],
+        header_row_index: null,
+        header_row_values: [],
+        headers_seen: [],
+        missing_required: ["id", "username", "password"],
+        header_ok: false,
+      };
+    }
+  }
+
   return {
     ...getControlModelStoreDiagnostics(error),
     control_model: {
       gas_url_present: Boolean(process.env.GAS_WEBAPP_URL),
       gas_key_present: Boolean(process.env.GAS_API_KEY),
     },
-    sheets: {
-      tried: false,
-    },
+    sheets,
   };
 }
 
@@ -93,7 +119,7 @@ export async function GET(request: Request) {
     return json(auth.requestId, 200, {
       ok: true,
       data,
-      ...(wantsDebug ? { debug: ownerUsersDebug() } : {}),
+      ...(wantsDebug ? { debug: await ownerUsersDebug() } : {}),
     });
   } catch (error) {
     if (isStorageError(error)) {
@@ -101,7 +127,7 @@ export async function GET(request: Request) {
         ok: false,
         error: "Control model unavailable",
         code: "CONTROL_MODEL_UNAVAILABLE",
-        ...(wantsDebug ? { debug: ownerUsersDebug(error.diagnostics?.store_init_error) } : {}),
+        ...(wantsDebug ? { debug: await ownerUsersDebug(error.diagnostics?.store_init_error) } : {}),
       });
     }
 
