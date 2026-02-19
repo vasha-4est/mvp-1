@@ -36,10 +36,19 @@ type LegacyControlModelData = {
 
 const DEFAULT_STORE_FILE = "/tmp/control_model.json";
 
+export type ControlModelStoreDiagnostics = {
+  store_backend: "file";
+  store_file_path: string;
+  store_init_error?: string;
+};
+
 export class StorageError extends Error {
-  constructor() {
-    super("Storage error");
+  diagnostics?: ControlModelStoreDiagnostics;
+
+  constructor(message = "Storage error", diagnostics?: ControlModelStoreDiagnostics) {
+    super(message);
     this.name = "StorageError";
+    this.diagnostics = diagnostics;
   }
 }
 
@@ -52,11 +61,28 @@ function storePath(): string {
   return fromEnv && fromEnv.trim() ? fromEnv.trim() : DEFAULT_STORE_FILE;
 }
 
+export function getControlModelStoreDiagnostics(initError?: string): ControlModelStoreDiagnostics {
+  return {
+    store_backend: "file",
+    store_file_path: storePath(),
+    ...(initError ? { store_init_error: initError } : {}),
+  };
+}
+
+function toStorageError(error: unknown): StorageError {
+  if (error instanceof StorageError) {
+    return error;
+  }
+
+  const message = error instanceof Error && error.message ? error.message : "Storage error";
+  return new StorageError("Storage error", getControlModelStoreDiagnostics(message));
+}
+
 async function withStorageGuard<T>(operation: () => Promise<T>): Promise<T> {
   try {
     return await operation();
-  } catch {
-    throw new StorageError();
+  } catch (error) {
+    throw toStorageError(error);
   }
 }
 
@@ -90,36 +116,40 @@ function normalizeStoreShape(parsed: unknown): ControlModelData {
   };
 }
 
-async function ensureStoreFile(): Promise<void> {
+async function ensureStoreDirectory(): Promise<void> {
   await withStorageGuard(async () => {
-    const filePath = storePath();
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-
-    try {
-      await fs.access(filePath);
-      return;
-    } catch {
-      await fs.writeFile(filePath, JSON.stringify(emptyStore(), null, 2), "utf8");
-    }
+    await fs.mkdir(path.dirname(storePath()), { recursive: true });
   });
 }
 
 async function readStore(): Promise<ControlModelData> {
-  await ensureStoreFile();
+  await ensureStoreDirectory();
 
   return withStorageGuard(async () => {
-    const raw = await fs.readFile(storePath(), "utf8");
+    const filePath = storePath();
+
+    let raw: string;
+    try {
+      raw = await fs.readFile(filePath, "utf8");
+    } catch (error) {
+      const nodeError = error as NodeJS.ErrnoException;
+      if (nodeError?.code === "ENOENT") {
+        return emptyStore();
+      }
+
+      throw error;
+    }
 
     try {
       return normalizeStoreShape(JSON.parse(raw));
     } catch {
-      return emptyStore();
+      throw new StorageError("Control model store is corrupted", getControlModelStoreDiagnostics("corrupted_json"));
     }
   });
 }
 
 async function writeStore(data: ControlModelData): Promise<void> {
-  await ensureStoreFile();
+  await ensureStoreDirectory();
 
   await withStorageGuard(async () => {
     await fs.writeFile(storePath(), JSON.stringify(data, null, 2), "utf8");
@@ -279,6 +309,51 @@ export async function listUsers(params: {
   return {
     total: filtered.length,
     users,
+  };
+}
+
+
+function isPasswordHash(value: string): boolean {
+  return value.startsWith("scrypt$");
+}
+
+export async function provisionUsers(): Promise<{
+  provisioned_count: number;
+  processed: number;
+  migratedLegacy: number;
+  alreadyHashed: number;
+  skippedInactive: number;
+  items: Array<{ id: string; username: string; status: "already_hashed" | "skipped_inactive" | "legacy_pending" }>;
+}> {
+  const store = await readStore();
+  const items: Array<{ id: string; username: string; status: "already_hashed" | "skipped_inactive" | "legacy_pending" }> = [];
+  let migratedLegacy = 0;
+  let alreadyHashed = 0;
+  let skippedInactive = 0;
+
+  for (const user of store.users) {
+    if (!user.is_active) {
+      skippedInactive += 1;
+      items.push({ id: user.id, username: user.username, status: "skipped_inactive" });
+      continue;
+    }
+
+    if (isPasswordHash(user.password_hash)) {
+      alreadyHashed += 1;
+      items.push({ id: user.id, username: user.username, status: "already_hashed" });
+      continue;
+    }
+
+    items.push({ id: user.id, username: user.username, status: "legacy_pending" });
+  }
+
+  return {
+    provisioned_count: migratedLegacy,
+    processed: store.users.length,
+    migratedLegacy,
+    alreadyHashed,
+    skippedInactive,
+    items,
   };
 }
 
