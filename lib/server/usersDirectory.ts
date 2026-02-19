@@ -1,5 +1,15 @@
 import { callGas } from "@/lib/integrations/gasClient";
 
+function errorToMessage(err: unknown, fallback: string): string {
+  if (!err) return fallback;
+  if (typeof err === "string") return err;
+  if (typeof err === "object") {
+    const e = err as { message?: string; code?: string };
+    return e.message || e.code || fallback;
+  }
+  return fallback;
+}
+
 export type UsersDirectoryDebug = {
   users_directory_found: boolean;
   available_sheet_names: string[];
@@ -35,16 +45,7 @@ export async function readUsersDirectoryFromGas(requestId: string): Promise<{
   );
 
   if (!response.ok || !response.data) {
-    const errStr =
-      typeof response.error === "string"
-        ? response.error
-        : response.error?.message
-          ? response.error.message
-          : response.error?.code
-            ? `Error: ${response.error.code}`
-            : "Failed to read users_directory";
-
-    throw new Error(errStr);
+    throw new Error(errorToMessage(response.error, "Failed to read users_directory"));
   }
 
   return {
@@ -83,7 +84,7 @@ export async function writeUsersDirectoryHashes(
   );
 
   if (!response.ok || !response.data) {
-    throw new Error(response.error ?? "Failed to write users_directory password hashes");
+    throw new Error(errorToMessage(response.error, "Failed to write users_directory password hashes"));
   }
 
   return {
