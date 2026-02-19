@@ -35,7 +35,16 @@ export async function readUsersDirectoryFromGas(requestId: string): Promise<{
   );
 
   if (!response.ok || !response.data) {
-    throw new Error(response.error ?? "Failed to read users_directory");
+    const errStr =
+      typeof response.error === "string"
+        ? response.error
+        : response.error?.message
+          ? response.error.message
+          : response.error?.code
+            ? `Error: ${response.error.code}`
+            : "Failed to read users_directory";
+
+    throw new Error(errStr);
   }
 
   return {
