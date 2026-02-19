@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
 
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
-import { createUser, findUserByUsername, getControlModelStoreDiagnostics, isStorageError, listUsers, normalizeRoleList } from "@/lib/server/controlModel";
+import {
+  createUser,
+  findUserByUsername,
+  getControlModelStoreDiagnostics,
+  getUsersDirectoryHealthDebug,
+  isStorageError,
+  listUsers,
+  normalizeRoleList,
+} from "@/lib/server/controlModel";
 import { requireOwner } from "@/lib/server/guards";
 import { hashPassword } from "@/lib/server/password";
 
@@ -13,16 +21,15 @@ function includeDebug(url: URL) {
   return url.searchParams.get("debug") === "1";
 }
 
-function ownerUsersDebug(error?: string) {
+async function ownerUsersDebug(error?: string) {
+  const sheets = await getUsersDirectoryHealthDebug().catch(() => ({ tried: false }));
   return {
     ...getControlModelStoreDiagnostics(error),
     control_model: {
       gas_url_present: Boolean(process.env.GAS_WEBAPP_URL),
       gas_key_present: Boolean(process.env.GAS_API_KEY),
     },
-    sheets: {
-      tried: false,
-    },
+    sheets,
   };
 }
 
@@ -93,7 +100,7 @@ export async function GET(request: Request) {
     return json(auth.requestId, 200, {
       ok: true,
       data,
-      ...(wantsDebug ? { debug: ownerUsersDebug() } : {}),
+      ...(wantsDebug ? { debug: await ownerUsersDebug() } : {}),
     });
   } catch (error) {
     if (isStorageError(error)) {
@@ -101,7 +108,7 @@ export async function GET(request: Request) {
         ok: false,
         error: "Control model unavailable",
         code: "CONTROL_MODEL_UNAVAILABLE",
-        ...(wantsDebug ? { debug: ownerUsersDebug(error.diagnostics?.store_init_error) } : {}),
+        ...(wantsDebug ? { debug: await ownerUsersDebug(error.diagnostics?.store_init_error) } : {}),
       });
     }
 

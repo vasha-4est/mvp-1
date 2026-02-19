@@ -1,19 +1,18 @@
 import { NextResponse } from "next/server";
 
 import { withApiLog } from "@/lib/obs/apiLog";
-import { getControlModelStoreDiagnostics, isStorageError, provisionUsers } from "@/lib/server/controlModel";
+import { getControlModelStoreDiagnostics, getUsersDirectoryHealthDebug, isStorageError, provisionUsers } from "@/lib/server/controlModel";
 import { requireOwner } from "@/lib/server/guards";
 
-function buildDebug(error?: string) {
+async function buildDebug(error?: string) {
+  const sheets = await getUsersDirectoryHealthDebug().catch(() => ({ tried: false }));
   return {
     ...getControlModelStoreDiagnostics(error),
     control_model: {
       gas_url_present: Boolean(process.env.GAS_WEBAPP_URL),
       gas_key_present: Boolean(process.env.GAS_API_KEY),
     },
-    sheets: {
-      tried: false,
-    },
+    sheets,
   };
 }
 
@@ -56,7 +55,7 @@ export async function POST(request: Request) {
         migratedLegacy: result.migratedLegacy,
         alreadyHashed: result.alreadyHashed,
         skippedInactive: result.skippedInactive,
-        ...(debugEnabled ? { debug: buildDebug() } : {}),
+        ...(debugEnabled ? { debug: await buildDebug() } : {}),
       })
     );
   } catch (error) {
@@ -67,7 +66,7 @@ export async function POST(request: Request) {
             ok: false,
             error: "Control model unavailable",
             code: "CONTROL_MODEL_UNAVAILABLE",
-            ...(debugEnabled ? { debug: buildDebug(error.diagnostics?.store_init_error) } : {}),
+            ...(debugEnabled ? { debug: await buildDebug(error.diagnostics?.store_init_error) } : {}),
           },
           { status: 503 }
         ),

@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import { randomUUID } from "crypto";
 import path from "path";
+import { hashPassword } from "@/lib/server/password";
 
 export const ALLOWED_ROLES = ["OWNER", "COO", "VIEWER"] as const;
 export type AllowedRole = (typeof ALLOWED_ROLES)[number];
@@ -9,7 +10,12 @@ export type UserRecord = {
   id: string;
   username: string;
   password_hash: string;
+  password?: string;
   is_active: boolean;
+  must_change_password?: boolean;
+  roles?: string;
+  display_name?: string;
+  notes?: string;
   created_at: string;
   updated_at: string;
   last_login_at: string | null;
@@ -28,10 +34,10 @@ type ControlModelData = {
 };
 
 type LegacyControlModelData = {
-  users_directory?: UserRecord[];
-  users_roles?: UserRoleRecord[];
-  users?: UserRecord[];
-  user_roles?: UserRoleRecord[];
+  users_directory?: unknown[];
+  users_roles?: unknown[];
+  users?: unknown[];
+  user_roles?: unknown[];
 };
 
 const DEFAULT_STORE_FILE = "/tmp/control_model.json";
@@ -93,26 +99,206 @@ function emptyStore(): ControlModelData {
   };
 }
 
+function normalizeHeaderKey(value: string): string {
+  return value
+    .replace(/^\ufeff/, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "_");
+}
+
+function getFieldValue(row: Record<string, unknown>, aliases: string[]): string {
+  for (const alias of aliases) {
+    const value = row[alias];
+    if (value === null || value === undefined) {
+      continue;
+    }
+
+    const asString = String(value).trim();
+    if (asString) {
+      return asString;
+    }
+  }
+
+  return "";
+}
+
+function toBoolean(value: string, fallback: boolean): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+
+  if (["true", "1", "yes", "y"].includes(normalized)) {
+    return true;
+  }
+
+  if (["false", "0", "no", "n"].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
+}
+
+function normalizeRow(input: unknown): Record<string, unknown> {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return {};
+  }
+
+  const normalized: Record<string, unknown> = {};
+  for (const [rawKey, value] of Object.entries(input)) {
+    const key = normalizeHeaderKey(rawKey);
+    if (!key) {
+      continue;
+    }
+
+    normalized[key] = value;
+  }
+
+  return normalized;
+}
+
+function normalizeUsers(rows: unknown[]): UserRecord[] {
+  const now = new Date().toISOString();
+
+  return rows
+    .map(normalizeRow)
+    .map((row) => {
+      const id = getFieldValue(row, ["id", "user_id"]);
+      const username = getFieldValue(row, ["username", "login"]);
+      const passwordHash = getFieldValue(row, ["password_hash"]);
+      const password = getFieldValue(row, ["password"]);
+      const isActive = toBoolean(getFieldValue(row, ["is_active"]), true);
+      const mustChangePassword = toBoolean(getFieldValue(row, ["must_change_password"]), false);
+      const createdAt = getFieldValue(row, ["created_at"]) || now;
+      const updatedAt = getFieldValue(row, ["updated_at"]) || createdAt;
+      const lastLoginAt = getFieldValue(row, ["last_login_at"]);
+
+      return {
+        id,
+        username,
+        password_hash: passwordHash,
+        ...(password ? { password } : {}),
+        is_active: isActive,
+        must_change_password: mustChangePassword,
+        roles: getFieldValue(row, ["roles", "role"]),
+        display_name: getFieldValue(row, ["display_name"]),
+        notes: getFieldValue(row, ["notes"]),
+        created_at: createdAt,
+        updated_at: updatedAt,
+        last_login_at: lastLoginAt || null,
+      } satisfies UserRecord;
+    })
+    .filter((user) => Boolean(user.id && user.username));
+}
+
+function normalizeUserRoles(rows: unknown[], users: UserRecord[]): UserRoleRecord[] {
+  const now = new Date().toISOString();
+  const fromTable = rows
+    .map(normalizeRow)
+    .map((row) => ({
+      id: getFieldValue(row, ["id"]) || randomUUID(),
+      user_id: getFieldValue(row, ["user_id", "id"]),
+      role: normalizeRole(getFieldValue(row, ["role"])) ?? null,
+      created_at: getFieldValue(row, ["created_at"]) || now,
+    }))
+    .filter((item): item is UserRoleRecord => Boolean(item.user_id && item.role));
+
+  if (fromTable.length > 0) {
+    return fromTable;
+  }
+
+  return users.flatMap((user) => {
+    const rolesRaw = user.roles ?? "";
+    const parsedRoles = rolesRaw
+      .split(",")
+      .map((role) => normalizeRole(role))
+      .filter((role): role is AllowedRole => role !== null);
+
+    const uniqueRoles = parsedRoles.filter((role, index, arr) => arr.indexOf(role) === index);
+    return uniqueRoles.map((role) => ({
+      id: randomUUID(),
+      user_id: user.id,
+      role,
+      created_at: now,
+    }));
+  });
+}
+
 function normalizeStoreShape(parsed: unknown): ControlModelData {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return emptyStore();
   }
 
   const typed = parsed as LegacyControlModelData;
-  const users = Array.isArray(typed.users)
+  const sourceUsers = Array.isArray(typed.users)
     ? typed.users
     : Array.isArray(typed.users_directory)
       ? typed.users_directory
       : [];
-  const userRoles = Array.isArray(typed.user_roles)
+  const users = normalizeUsers(sourceUsers);
+
+  const sourceUserRoles = Array.isArray(typed.user_roles)
     ? typed.user_roles
     : Array.isArray(typed.users_roles)
       ? typed.users_roles
       : [];
+  const userRoles = normalizeUserRoles(sourceUserRoles, users);
 
   return {
     users,
     user_roles: userRoles,
+  };
+}
+
+export async function getUsersDirectoryHealthDebug(): Promise<{
+  headers_seen: string[];
+  missing_required: string[];
+  header_ok: boolean;
+  header_row_values?: Record<string, unknown>;
+}> {
+  await ensureStoreDirectory();
+
+  let firstRawRow: Record<string, unknown> | null = null;
+  try {
+    const raw = await fs.readFile(storePath(), "utf8");
+    const parsed = JSON.parse(raw) as LegacyControlModelData;
+    const sourceUsers = Array.isArray(parsed.users)
+      ? parsed.users
+      : Array.isArray(parsed.users_directory)
+        ? parsed.users_directory
+        : [];
+
+    if (sourceUsers.length > 0) {
+      firstRawRow = normalizeRow(sourceUsers[0]);
+    }
+  } catch {
+    firstRawRow = null;
+  }
+
+  const headersSeen = firstRawRow ? Object.keys(firstRawRow) : [];
+
+  const hasId = headersSeen.includes("id") || headersSeen.includes("user_id");
+  const hasUsername = headersSeen.includes("username") || headersSeen.includes("login");
+  const hasCredential = headersSeen.includes("password") || headersSeen.includes("password_hash");
+  const headerOk = hasId && hasUsername && hasCredential;
+
+  const missingRequired: string[] = [];
+  if (!hasId) {
+    missingRequired.push("id|user_id");
+  }
+  if (!hasUsername) {
+    missingRequired.push("username|login");
+  }
+  if (!hasCredential) {
+    missingRequired.push("password|password_hash");
+  }
+
+  return {
+    headers_seen: headersSeen,
+    missing_required: missingRequired,
+    header_ok: headerOk,
+    ...(firstRawRow ? { header_row_values: firstRawRow } : {}),
   };
 }
 
@@ -323,13 +509,16 @@ export async function provisionUsers(): Promise<{
   migratedLegacy: number;
   alreadyHashed: number;
   skippedInactive: number;
-  items: Array<{ id: string; username: string; status: "already_hashed" | "skipped_inactive" | "legacy_pending" }>;
+  skippedNoPassword: number;
+  items: Array<{ id: string; username: string; status: "already_hashed" | "skipped_inactive" | "legacy_pending" | "provisioned" | "skipped_no_password" }>;
 }> {
   const store = await readStore();
-  const items: Array<{ id: string; username: string; status: "already_hashed" | "skipped_inactive" | "legacy_pending" }> = [];
+  const items: Array<{ id: string; username: string; status: "already_hashed" | "skipped_inactive" | "legacy_pending" | "provisioned" | "skipped_no_password" }> = [];
   let migratedLegacy = 0;
   let alreadyHashed = 0;
   let skippedInactive = 0;
+  let skippedNoPassword = 0;
+  let changed = false;
 
   for (const user of store.users) {
     if (!user.is_active) {
@@ -344,7 +533,29 @@ export async function provisionUsers(): Promise<{
       continue;
     }
 
-    items.push({ id: user.id, username: user.username, status: "legacy_pending" });
+    const plainPassword = user.password?.trim() ?? "";
+    if (plainPassword) {
+      user.password_hash = await hashPassword(plainPassword, 12);
+      delete user.password;
+      user.updated_at = new Date().toISOString();
+      migratedLegacy += 1;
+      changed = true;
+      items.push({ id: user.id, username: user.username, status: "provisioned" });
+      continue;
+    }
+
+    if (user.password_hash.trim()) {
+      items.push({ id: user.id, username: user.username, status: "legacy_pending" });
+      continue;
+    }
+
+    skippedNoPassword += 1;
+    items.push({ id: user.id, username: user.username, status: "skipped_no_password" });
+    continue;
+  }
+
+  if (changed) {
+    await writeStore(store);
   }
 
   return {
@@ -353,6 +564,7 @@ export async function provisionUsers(): Promise<{
     migratedLegacy,
     alreadyHashed,
     skippedInactive,
+    skippedNoPassword,
     items,
   };
 }
