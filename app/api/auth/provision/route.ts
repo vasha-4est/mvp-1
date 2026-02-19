@@ -3,17 +3,43 @@ import { NextResponse } from "next/server";
 import { withApiLog } from "@/lib/obs/apiLog";
 import { getControlModelStoreDiagnostics, isStorageError, provisionUsers } from "@/lib/server/controlModel";
 import { requireOwner } from "@/lib/server/guards";
+import { readUsersDirectoryFromGas } from "@/lib/server/usersDirectory";
 
-function buildDebug(error?: string) {
+async function buildDebug(error?: string) {
+  let sheets: Record<string, unknown> = { tried: false };
+
+  if (process.env.GAS_WEBAPP_URL) {
+    try {
+      const source = await readUsersDirectoryFromGas("auth-provision-debug");
+      sheets = {
+        users_directory_found: source.debug.users_directory_found,
+        available_sheet_names: source.debug.available_sheet_names,
+        header_row_index: source.debug.header_row_index,
+        header_row_values: source.debug.header_row_values,
+        headers_seen: source.debug.headers_seen,
+        missing_required: source.debug.missing_required,
+        header_ok: source.debug.header_ok,
+      };
+    } catch {
+      sheets = {
+        users_directory_found: false,
+        available_sheet_names: [],
+        header_row_index: null,
+        header_row_values: [],
+        headers_seen: [],
+        missing_required: ["id", "username", "password"],
+        header_ok: false,
+      };
+    }
+  }
+
   return {
     ...getControlModelStoreDiagnostics(error),
     control_model: {
       gas_url_present: Boolean(process.env.GAS_WEBAPP_URL),
       gas_key_present: Boolean(process.env.GAS_API_KEY),
     },
-    sheets: {
-      tried: false,
-    },
+    sheets,
   };
 }
 
@@ -56,7 +82,8 @@ export async function POST(request: Request) {
         migratedLegacy: result.migratedLegacy,
         alreadyHashed: result.alreadyHashed,
         skippedInactive: result.skippedInactive,
-        ...(debugEnabled ? { debug: buildDebug() } : {}),
+        skippedNoPassword: result.skippedNoPassword,
+        ...(debugEnabled ? { debug: await buildDebug() } : {}),
       })
     );
   } catch (error) {
@@ -67,7 +94,7 @@ export async function POST(request: Request) {
             ok: false,
             error: "Control model unavailable",
             code: "CONTROL_MODEL_UNAVAILABLE",
-            ...(debugEnabled ? { debug: buildDebug(error.diagnostics?.store_init_error) } : {}),
+            ...(debugEnabled ? { debug: await buildDebug(error.diagnostics?.store_init_error) } : {}),
           },
           { status: 503 }
         ),

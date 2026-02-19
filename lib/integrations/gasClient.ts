@@ -1,6 +1,6 @@
 const DEFAULT_TIMEOUT_MS = 12_000;
 
-type GasResponse<T> = { ok: boolean; data?: T; error?: string };
+type GasResponse<T> = { ok: boolean; data?: T; error?: string | { code?: string; message?: string } };
 
 export async function callGas<T>(
   action: string,
@@ -69,7 +69,17 @@ export async function callGas<T>(
         return { ok: true, data: result.data };
       }
 
-      return { ok: false, error: result.error ?? "GAS request failed" };
+      if (typeof result.error === "string") {
+        return { ok: false, error: result.error };
+      }
+
+      if (result.error && typeof result.error === "object") {
+        const code = typeof result.error.code === "string" ? result.error.code : "GAS_ERROR";
+        const message = typeof result.error.message === "string" ? result.error.message : "GAS request failed";
+        return { ok: false, error: `${code}: ${message}` };
+      }
+
+      return { ok: false, error: "GAS request failed" };
     }
 
     return { ok: true, data: json as T };
