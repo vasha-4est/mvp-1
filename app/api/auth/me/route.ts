@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getSessionFromRequest } from "@/lib/auth";
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from "@/lib/obs/requestId";
+import { findUserByUsername } from "@/lib/server/controlModel";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status, headers: { [REQUEST_ID_HEADER]: requestId } });
@@ -17,12 +18,15 @@ export async function GET(request: Request) {
       return json(requestId, 401, { ok: false, error: "Unauthorized", code: "UNAUTHORIZED" });
     }
 
+    const user = await findUserByUsername(session.username, requestId);
+
     return json(requestId, 200, {
       ok: true,
       user: {
         id: session.user_id,
         login: session.username,
         roles: session.roles,
+        must_change_password: user.user?.must_change_password ?? false,
       },
     });
   } catch {

@@ -1,20 +1,11 @@
 import { NextResponse } from "next/server";
 
 import { withApiLog } from "@/lib/obs/apiLog";
-import { getControlModelStoreDiagnostics, isStorageError, provisionUsers } from "@/lib/server/controlModel";
+import { isStorageError, provisionUsers } from "@/lib/server/controlModel";
 import { requireOwner } from "@/lib/server/guards";
 
-function buildDebug(error?: string) {
-  return {
-    ...getControlModelStoreDiagnostics(error),
-    control_model: {
-      gas_url_present: Boolean(process.env.GAS_WEBAPP_URL),
-      gas_key_present: Boolean(process.env.GAS_API_KEY),
-    },
-    sheets: {
-      tried: false,
-    },
-  };
+export async function GET(request: Request) {
+  return NextResponse.json({ ok: false, code: "METHOD_NOT_ALLOWED", error: "Use POST" }, { status: 405 });
 }
 
 export async function POST(request: Request) {
@@ -47,16 +38,17 @@ export async function POST(request: Request) {
     });
 
   try {
-    const result = await provisionUsers();
+    const result = await provisionUsers(requestId);
 
     return finalize(
       NextResponse.json({
         ok: true,
-        ...result,
-        migratedLegacy: result.migratedLegacy,
+        provisioned_count: result.provisioned_count,
+        processed: result.processed,
         alreadyHashed: result.alreadyHashed,
         skippedInactive: result.skippedInactive,
-        ...(debugEnabled ? { debug: buildDebug() } : {}),
+        skippedNoPassword: result.skippedNoPassword,
+        ...(debugEnabled ? { debug: result.diagnostics } : {}),
       })
     );
   } catch (error) {
@@ -67,7 +59,7 @@ export async function POST(request: Request) {
             ok: false,
             error: "Control model unavailable",
             code: "CONTROL_MODEL_UNAVAILABLE",
-            ...(debugEnabled ? { debug: buildDebug(error.diagnostics?.store_init_error) } : {}),
+            ...(debugEnabled && error.diagnostics ? { debug: error.diagnostics } : {}),
           },
           { status: 503 }
         ),
