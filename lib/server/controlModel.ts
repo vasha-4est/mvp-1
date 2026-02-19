@@ -1,6 +1,8 @@
 import { promises as fs } from "fs";
 import { randomUUID } from "crypto";
 import path from "path";
+import { callGas } from "@/lib/integrations/gasClient";
+import { hashPassword } from "@/lib/server/password";
 
 export const ALLOWED_ROLES = ["OWNER", "COO", "VIEWER"] as const;
 export type AllowedRole = (typeof ALLOWED_ROLES)[number];
@@ -41,6 +43,139 @@ export type ControlModelStoreDiagnostics = {
   store_file_path: string;
   store_init_error?: string;
 };
+
+export type UsersDirectoryDiagnostics = {
+  header_row_index: number;
+  header_row_values: string[];
+  headers_seen: string[];
+  header_ok: boolean;
+};
+
+type UsersDirectoryRow = {
+  row_index: number;
+  values: string[];
+};
+
+type UsersDirectoryGasResponse = UsersDirectoryDiagnostics & {
+  users_directory?: Record<string, unknown>[];
+  data_rows_values?: UsersDirectoryRow[];
+};
+
+function normalizeHeaderKey(value: string): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+}
+
+export async function readUsersDirectoryFromGas(requestId: string): Promise<{
+  diagnostics: UsersDirectoryDiagnostics;
+  rows: Array<{ rowIndex: number; raw: string[]; data: Record<string, string> }>;
+}> {
+  const response = await callGas<UsersDirectoryGasResponse>("control_model.users_directory.read", {}, requestId);
+  if (!response.ok || !response.data) {
+    throw new Error(response.error ?? "Failed to read users_directory");
+  }
+
+  const data = response.data;
+  const headerRowValues = Array.isArray(data.header_row_values) ? data.header_row_values.map((v) => String(v ?? "")) : [];
+  const headersSeen = Array.isArray(data.headers_seen)
+    ? data.headers_seen.map((v) => normalizeHeaderKey(String(v ?? "")))
+    : headerRowValues.map((v) => normalizeHeaderKey(v));
+
+  const diagnostics: UsersDirectoryDiagnostics = {
+    header_row_index: Number.isFinite(data.header_row_index) ? Number(data.header_row_index) : 0,
+    header_row_values: headerRowValues,
+    headers_seen: headersSeen,
+    header_ok: Boolean(data.header_ok) || headersSeen.some((value) => Boolean(value)),
+  };
+
+  const sourceRows = Array.isArray(data.data_rows_values)
+    ? data.data_rows_values
+    : Array.isArray(data.users_directory)
+      ? data.users_directory.map((item, index) => ({ row_index: diagnostics.header_row_index + 1 + index, values: headersSeen.map((key) => String((item || {})[key] ?? "")) }))
+      : [];
+
+  const rows = sourceRows
+    .map((row) => {
+      const values = Array.isArray(row.values) ? row.values.map((value) => String(value ?? "")) : [];
+      const mapped: Record<string, string> = {};
+      headersSeen.forEach((header, index) => {
+        if (!header) {
+          return;
+        }
+        mapped[header] = values[index] ?? "";
+      });
+
+      return {
+        rowIndex: Number(row.row_index),
+        raw: values,
+        data: mapped,
+      };
+    })
+    .filter((row) => Object.values(row.data).some((value) => value.trim().length > 0));
+
+  return {
+    diagnostics,
+    rows,
+  };
+}
+
+export async function provisionUsersFromGas(requestId: string): Promise<{
+  provisioned_count: number;
+  processed: number;
+  alreadyHashed: number;
+  skippedNoPassword: number;
+  updated: number;
+}> {
+  const snapshot = await readUsersDirectoryFromGas(requestId);
+  const passwordKey = "password";
+  const passwordHashKey = "password_hash";
+  const updates: Array<{ row_index: number; password_hash: string }> = [];
+  let alreadyHashed = 0;
+  let skippedNoPassword = 0;
+
+  for (const row of snapshot.rows) {
+    const password = String(row.data[passwordKey] ?? "").trim();
+    const passwordHash = String(row.data[passwordHashKey] ?? "").trim();
+
+    if (!password) {
+      skippedNoPassword += 1;
+      continue;
+    }
+
+    if (isPasswordHash(passwordHash)) {
+      alreadyHashed += 1;
+      continue;
+    }
+
+    updates.push({
+      row_index: row.rowIndex,
+      password_hash: await hashPassword(password, 12),
+    });
+  }
+
+  let updated = 0;
+  if (updates.length > 0) {
+    const patchResult = await callGas<{ updated?: number }>(
+      "control_model.users_directory.patch_passwords",
+      { updates },
+      requestId
+    );
+    if (!patchResult.ok) {
+      throw new Error(patchResult.error ?? "Failed to patch users_directory passwords");
+    }
+    updated = Number((patchResult.data && patchResult.data.updated) || 0);
+  }
+
+  return {
+    provisioned_count: updated,
+    processed: snapshot.rows.length,
+    alreadyHashed,
+    skippedNoPassword,
+    updated,
+  };
+}
 
 export class StorageError extends Error {
   diagnostics?: ControlModelStoreDiagnostics;

@@ -1,17 +1,17 @@
 import { NextResponse } from "next/server";
 
 import { withApiLog } from "@/lib/obs/apiLog";
-import { getControlModelStoreDiagnostics, isStorageError, provisionUsers } from "@/lib/server/controlModel";
+import { getControlModelStoreDiagnostics, provisionUsersFromGas, readUsersDirectoryFromGas } from "@/lib/server/controlModel";
 import { requireOwner } from "@/lib/server/guards";
 
-function buildDebug(error?: string) {
+function buildDebug(params?: { error?: string; sheets?: Record<string, unknown> }) {
   return {
-    ...getControlModelStoreDiagnostics(error),
+    ...getControlModelStoreDiagnostics(params?.error),
     control_model: {
       gas_url_present: Boolean(process.env.GAS_WEBAPP_URL),
       gas_key_present: Boolean(process.env.GAS_API_KEY),
     },
-    sheets: {
+    sheets: params?.sheets ?? {
       tried: false,
     },
   };
@@ -47,44 +47,40 @@ export async function POST(request: Request) {
     });
 
   try {
-    const result = await provisionUsers();
+    const snapshot = await readUsersDirectoryFromGas(requestId);
+    const result = await provisionUsersFromGas(requestId);
 
     return finalize(
       NextResponse.json({
         ok: true,
         ...result,
-        migratedLegacy: result.migratedLegacy,
-        alreadyHashed: result.alreadyHashed,
-        skippedInactive: result.skippedInactive,
-        ...(debugEnabled ? { debug: buildDebug() } : {}),
+        ...(debugEnabled
+          ? {
+              debug: buildDebug({
+                sheets: {
+                  tried: true,
+                  header_ok: snapshot.diagnostics.header_ok,
+                  header_row_index: snapshot.diagnostics.header_row_index,
+                  header_row_values: snapshot.diagnostics.header_row_values,
+                  headers_seen: snapshot.diagnostics.headers_seen,
+                },
+              }),
+            }
+          : {}),
       })
     );
   } catch (error) {
-    if (isStorageError(error)) {
-      return finalize(
-        NextResponse.json(
-          {
-            ok: false,
-            error: "Control model unavailable",
-            code: "CONTROL_MODEL_UNAVAILABLE",
-            ...(debugEnabled ? { debug: buildDebug(error.diagnostics?.store_init_error) } : {}),
-          },
-          { status: 503 }
-        ),
-        "CONTROL_MODEL_UNAVAILABLE"
-      );
-    }
-
     return finalize(
       NextResponse.json(
         {
           ok: false,
-          error: "Internal server error",
-          code: "INTERNAL_ERROR",
+          error: error instanceof Error ? error.message : "Control model unavailable",
+          code: "CONTROL_MODEL_UNAVAILABLE",
+          ...(debugEnabled ? { debug: buildDebug({ error: error instanceof Error ? error.message : undefined }) } : {}),
         },
-        { status: 500 }
+        { status: 503 }
       ),
-      "INTERNAL_ERROR"
+      "CONTROL_MODEL_UNAVAILABLE"
     );
   }
 }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
-import { createUser, findUserByUsername, getControlModelStoreDiagnostics, isStorageError, listUsers, normalizeRoleList } from "@/lib/server/controlModel";
+import { createUser, findUserByUsername, getControlModelStoreDiagnostics, isStorageError, normalizeRoleList, readUsersDirectoryFromGas } from "@/lib/server/controlModel";
 import { requireOwner } from "@/lib/server/guards";
 import { hashPassword } from "@/lib/server/password";
 
@@ -13,14 +13,14 @@ function includeDebug(url: URL) {
   return url.searchParams.get("debug") === "1";
 }
 
-function ownerUsersDebug(error?: string) {
+function ownerUsersDebug(params?: { error?: string; sheets?: Record<string, unknown> }) {
   return {
-    ...getControlModelStoreDiagnostics(error),
+    ...getControlModelStoreDiagnostics(params?.error),
     control_model: {
       gas_url_present: Boolean(process.env.GAS_WEBAPP_URL),
       gas_key_present: Boolean(process.env.GAS_API_KEY),
     },
-    sheets: {
+    sheets: params?.sheets ?? {
       tried: false,
     },
   };
@@ -82,18 +82,47 @@ export async function GET(request: Request) {
   try {
     const page = Number(url.searchParams.get("page") ?? "1");
     const pageSize = Number(url.searchParams.get("pageSize") ?? "20");
-    const username = url.searchParams.get("username") ?? undefined;
+    const usernameFilter = (url.searchParams.get("username") ?? "").trim().toLowerCase();
+    const normalizedPage = Number.isFinite(page) && page > 0 ? page : 1;
+    const normalizedPageSize = Number.isFinite(pageSize) && pageSize > 0 ? Math.min(pageSize, 100) : 20;
 
-    const data = await listUsers({
-      page: Number.isFinite(page) && page > 0 ? page : 1,
-      pageSize: Number.isFinite(pageSize) && pageSize > 0 ? Math.min(pageSize, 100) : 20,
-      username,
+    const snapshot = await readUsersDirectoryFromGas(auth.requestId);
+    const mappedUsers = snapshot.rows.map((row) => ({
+      id: String(row.data.id ?? "").trim(),
+      username: String(row.data.username ?? "").trim(),
+      is_active: String(row.data.is_active ?? "true").trim().toLowerCase() !== "false",
+      roles: [],
+    }));
+
+    const filtered = mappedUsers.filter((user) => {
+      if (!usernameFilter) {
+        return true;
+      }
+      return user.username.toLowerCase().includes(usernameFilter);
     });
+
+    const start = (normalizedPage - 1) * normalizedPageSize;
+    const users = filtered.slice(start, start + normalizedPageSize);
 
     return json(auth.requestId, 200, {
       ok: true,
-      data,
-      ...(wantsDebug ? { debug: ownerUsersDebug() } : {}),
+      data: {
+        total: filtered.length,
+        users,
+      },
+      ...(wantsDebug
+        ? {
+            debug: ownerUsersDebug({
+              sheets: {
+                tried: true,
+                header_ok: snapshot.diagnostics.header_ok,
+                header_row_index: snapshot.diagnostics.header_row_index,
+                header_row_values: snapshot.diagnostics.header_row_values,
+                headers_seen: snapshot.diagnostics.headers_seen,
+              },
+            }),
+          }
+        : {}),
     });
   } catch (error) {
     if (isStorageError(error)) {
@@ -101,7 +130,7 @@ export async function GET(request: Request) {
         ok: false,
         error: "Control model unavailable",
         code: "CONTROL_MODEL_UNAVAILABLE",
-        ...(wantsDebug ? { debug: ownerUsersDebug(error.diagnostics?.store_init_error) } : {}),
+        ...(wantsDebug ? { debug: ownerUsersDebug({ error: error.diagnostics?.store_init_error }) } : {}),
       });
     }
 
