@@ -1,12 +1,29 @@
 import { NextResponse } from "next/server";
 
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
+import { createUser, findUserByUsername, getControlModelStoreDiagnostics, isStorageError, listUsers, normalizeRoleList } from "@/lib/server/controlModel";
 import { requireOwner } from "@/lib/server/guards";
-import { createUser, findUserByUsername, isStorageError, listUsers, normalizeRoleList } from "@/lib/server/controlModel";
 import { hashPassword } from "@/lib/server/password";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status, headers: { [REQUEST_ID_HEADER]: requestId } });
+}
+
+function includeDebug(url: URL) {
+  return url.searchParams.get("debug") === "1";
+}
+
+function ownerUsersDebug(error?: string) {
+  return {
+    ...getControlModelStoreDiagnostics(error),
+    control_model: {
+      gas_url_present: Boolean(process.env.GAS_WEBAPP_URL),
+      gas_key_present: Boolean(process.env.GAS_API_KEY),
+    },
+    sheets: {
+      tried: false,
+    },
+  };
 }
 
 export async function POST(request: Request) {
@@ -59,8 +76,10 @@ export async function GET(request: Request) {
     return auth.response;
   }
 
+  const url = new URL(request.url);
+  const wantsDebug = includeDebug(url);
+
   try {
-    const url = new URL(request.url);
     const page = Number(url.searchParams.get("page") ?? "1");
     const pageSize = Number(url.searchParams.get("pageSize") ?? "20");
     const username = url.searchParams.get("username") ?? undefined;
@@ -74,10 +93,16 @@ export async function GET(request: Request) {
     return json(auth.requestId, 200, {
       ok: true,
       data,
+      ...(wantsDebug ? { debug: ownerUsersDebug() } : {}),
     });
   } catch (error) {
     if (isStorageError(error)) {
-      return json(auth.requestId, 500, { ok: false, error: "Storage error", code: "STORAGE_ERROR" });
+      return json(auth.requestId, 503, {
+        ok: false,
+        error: "Control model unavailable",
+        code: "CONTROL_MODEL_UNAVAILABLE",
+        ...(wantsDebug ? { debug: ownerUsersDebug(error.diagnostics?.store_init_error) } : {}),
+      });
     }
 
     return json(auth.requestId, 500, { ok: false, error: "Internal server error", code: "INTERNAL_ERROR" });
