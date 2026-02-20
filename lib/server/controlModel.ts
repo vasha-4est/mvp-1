@@ -226,6 +226,24 @@ export async function getRolesForUser(userId: string): Promise<AllowedRole[]> {
     .filter((role, index, arr) => arr.indexOf(role) === index);
 }
 
+export async function migrateUserPasswordToScrypt(userId: string, newHash: string): Promise<void> {
+  if (process.env.GAS_WEBAPP_URL) {
+    const requestId = randomUUID();
+    await writeUsersDirectoryHashes(requestId, [{ id: userId, password_hash: newHash }]);
+  }
+
+  const store = await readStore();
+  const user = store.users.find((item) => item.id === userId);
+  if (!user) {
+    return;
+  }
+
+  user.password_hash = newHash;
+  user.password = newHash;
+  user.updated_at = new Date().toISOString();
+  await writeStore(store);
+}
+
 export async function touchLastLoginAt(userId: string, atIso: string): Promise<void> {
   const store = await readStore();
   const user = store.users.find((item) => item.id === userId);
@@ -438,15 +456,18 @@ export async function provisionUsers(): Promise<{
       continue;
     }
 
-    const existingHash = row.password_hash.trim();
-    const passwordPlain = row.password.trim();
+    const existingPasswordHash = row.password_hash.trim();
+    const passwordValue = row.password.trim();
+    const currentScrypt = [existingPasswordHash, passwordValue].find((value) => value && isPasswordHash(value)) ?? "";
 
-    if (existingHash && isPasswordHash(existingHash)) {
+    let hashToStore = currentScrypt;
+
+    if (currentScrypt) {
       alreadyHashed += 1;
       items.push({ id, username, status: "already_hashed" });
-    } else if (passwordPlain) {
-      const hashed = await hashPassword(passwordPlain, 12);
-      hashUpdates.push({ id, password_hash: hashed });
+    } else if (passwordValue) {
+      hashToStore = await hashPassword(passwordValue, 12);
+      hashUpdates.push({ id, password_hash: hashToStore });
       migratedLegacy += 1;
       items.push({ id, username, status: "provisioned" });
     } else {
@@ -456,23 +477,36 @@ export async function provisionUsers(): Promise<{
     }
 
     const now = new Date().toISOString();
-    const hashToStore = existingHash && isPasswordHash(existingHash) ? existingHash : hashUpdates[hashUpdates.length - 1]?.password_hash;
-    if (!hashToStore) {
-      continue;
-    }
-
     const existingUser = store.users.find((user) => user.id === id || user.username.trim().toLowerCase() === username.toLowerCase());
     if (existingUser) {
-      existingUser.id = id;
-      existingUser.username = username;
-      existingUser.password_hash = hashToStore;
-      existingUser.is_active = isActive;
-      existingUser.updated_at = now;
+      let changed = false;
+
+      if (existingUser.id !== id) {
+        existingUser.id = id;
+        changed = true;
+      }
+      if (existingUser.username !== username) {
+        existingUser.username = username;
+        changed = true;
+      }
+      if (existingUser.password_hash !== hashToStore) {
+        existingUser.password_hash = hashToStore;
+        changed = true;
+      }
+      if (existingUser.is_active !== isActive) {
+        existingUser.is_active = isActive;
+        changed = true;
+      }
+
+      if (changed) {
+        existingUser.updated_at = now;
+      }
     } else {
       store.users.push({
         id,
         username,
         password_hash: hashToStore,
+        password: hashToStore,
         is_active: isActive,
         created_at: now,
         updated_at: now,
@@ -481,14 +515,25 @@ export async function provisionUsers(): Promise<{
     }
 
     const roles = parseRoles(row.roles);
-    store.user_roles = store.user_roles.filter((entry) => entry.user_id !== id);
-    for (const role of roles) {
-      store.user_roles.push({
-        id: randomUUID(),
-        user_id: id,
-        role,
-        created_at: now,
-      });
+    const existingRoles = store.user_roles
+      .filter((entry) => entry.user_id === id)
+      .map((entry) => entry.role)
+      .filter((role, index, arr) => arr.indexOf(role) === index)
+      .sort();
+    const normalizedRoles = [...roles].sort();
+    const sameRoles =
+      existingRoles.length === normalizedRoles.length && existingRoles.every((role, index) => role === normalizedRoles[index]);
+
+    if (!sameRoles) {
+      store.user_roles = store.user_roles.filter((entry) => entry.user_id !== id);
+      for (const role of roles) {
+        store.user_roles.push({
+          id: randomUUID(),
+          user_id: id,
+          role,
+          created_at: now,
+        });
+      }
     }
   }
 
