@@ -398,6 +398,7 @@ export async function provisionUsers(): Promise<{
   skippedInactive: number;
   skippedNoPassword: number;
   items: Array<{ id: string; username: string; status: "already_hashed" | "skipped_inactive" | "legacy_pending" | "skipped_no_password" | "provisioned" }>;
+  debug_samples: Array<{ id: string; username: string; action: "skippedNoPassword" | "alreadyHashed" | "hashedPlaintext"; password_kind_detected: "empty" | "scrypt" | "plaintext" }>;
 }> {
   if (!process.env.GAS_WEBAPP_URL) {
     const store = await readStore();
@@ -409,6 +410,7 @@ export async function provisionUsers(): Promise<{
       skippedInactive: 0,
       skippedNoPassword: store.users.length,
       items: store.users.map((user) => ({ id: user.id, username: user.username, status: "skipped_no_password" })),
+      debug_samples: [],
     };
   }
 
@@ -422,7 +424,15 @@ export async function provisionUsers(): Promise<{
   let skippedInactive = 0;
   let skippedNoPassword = 0;
 
+  const debugSamples: Array<{ id: string; username: string; action: "skippedNoPassword" | "alreadyHashed" | "hashedPlaintext"; password_kind_detected: "empty" | "scrypt" | "plaintext" }> = [];
+
   const hashUpdates: Array<{ id: string; password_hash: string }> = [];
+
+  function pushSample(sample: { id: string; username: string; action: "skippedNoPassword" | "alreadyHashed" | "hashedPlaintext"; password_kind_detected: "empty" | "scrypt" | "plaintext" }) {
+    if (debugSamples.length < 3) {
+      debugSamples.push(sample);
+    }
+  }
 
   for (const row of source.users) {
     const id = row.id.trim();
@@ -438,25 +448,43 @@ export async function provisionUsers(): Promise<{
       continue;
     }
 
-    const existingHash = row.password_hash.trim();
-    const passwordPlain = row.password.trim();
+    const passwordValue = row.password.trim();
+    const passwordHashValue = row.password_hash.trim();
 
-    if (existingHash && isPasswordHash(existingHash)) {
+    const passwordKind: "empty" | "scrypt" | "plaintext" = !passwordValue
+      ? "empty"
+      : passwordValue.startsWith("scrypt$")
+        ? "scrypt"
+        : "plaintext";
+
+    let hashToStore: string | null = null;
+
+    if (passwordKind === "scrypt") {
       alreadyHashed += 1;
       items.push({ id, username, status: "already_hashed" });
-    } else if (passwordPlain) {
-      const hashed = await hashPassword(passwordPlain, 12);
+      pushSample({ id, username, action: "alreadyHashed", password_kind_detected: "scrypt" });
+      hashToStore = passwordValue;
+    } else if (passwordKind === "plaintext") {
+      const hashed = await hashPassword(passwordValue, 12);
       hashUpdates.push({ id, password_hash: hashed });
       migratedLegacy += 1;
       items.push({ id, username, status: "provisioned" });
+      pushSample({ id, username, action: "hashedPlaintext", password_kind_detected: "plaintext" });
+      hashToStore = hashed;
+    } else if (passwordHashValue && isPasswordHash(passwordHashValue)) {
+      // Safety fallback if only password_hash has an scrypt token.
+      alreadyHashed += 1;
+      items.push({ id, username, status: "already_hashed" });
+      pushSample({ id, username, action: "alreadyHashed", password_kind_detected: "scrypt" });
+      hashToStore = passwordHashValue;
     } else {
       skippedNoPassword += 1;
       items.push({ id, username, status: "skipped_no_password" });
+      pushSample({ id, username, action: "skippedNoPassword", password_kind_detected: "empty" });
       continue;
     }
 
     const now = new Date().toISOString();
-    const hashToStore = existingHash && isPasswordHash(existingHash) ? existingHash : hashUpdates[hashUpdates.length - 1]?.password_hash;
     if (!hashToStore) {
       continue;
     }
@@ -506,6 +534,7 @@ export async function provisionUsers(): Promise<{
     skippedInactive,
     skippedNoPassword,
     items,
+    debug_samples: debugSamples,
   };
 }
 
