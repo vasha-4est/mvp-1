@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { deactivateUser, isStorageError, normalizeRoleList, updateUserById } from "@/lib/server/controlModel";
 import { requireOwner } from "@/lib/server/guards";
-import { hashPassword } from "@/lib/server/password";
+import { hashPasswordScrypt } from "@/lib/server/auth/scrypt";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status, headers: { [REQUEST_ID_HEADER]: requestId } });
@@ -32,7 +32,7 @@ export async function PATCH(request: Request, { params }: { params: { id: string
       return json(auth.requestId, 400, { ok: false, code: "VALIDATION_ERROR" });
     }
 
-    const passwordHash = password ? await hashPassword(password, 12) : undefined;
+    const passwordHash = password ? await hashPasswordScrypt(password) : undefined;
 
     const ok = await updateUserById(params.id, {
       passwordHash,

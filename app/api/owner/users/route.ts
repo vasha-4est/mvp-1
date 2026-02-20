@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { createUser, findUserByUsername, getControlModelStoreDiagnostics, isStorageError, listUsers, normalizeRoleList } from "@/lib/server/controlModel";
 import { requireOwner } from "@/lib/server/guards";
-import { hashPassword } from "@/lib/server/password";
+import { hashPasswordScrypt } from "@/lib/server/auth/scrypt";
 import { readUsersDirectoryFromGas } from "@/lib/server/usersDirectory";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
@@ -83,7 +83,7 @@ export async function POST(request: Request) {
       return json(auth.requestId, 409, { ok: false, code: "USERNAME_EXISTS" });
     }
 
-    const passwordHash = await hashPassword(password, 12);
+    const passwordHash = await hashPasswordScrypt(password);
     const created = await createUser({ username, passwordHash, roles });
 
     return json(auth.requestId, 201, { ok: true, user_id: created.user_id });

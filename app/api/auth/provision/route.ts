@@ -78,12 +78,14 @@ export async function POST(request: Request) {
     return finalize(
       NextResponse.json({
         ok: true,
-        ...result,
+        provisioned_count: result.provisioned_count,
+        processed: result.processed,
         migratedLegacy: result.migratedLegacy,
         alreadyHashed: result.alreadyHashed,
         skippedInactive: result.skippedInactive,
         skippedNoPassword: result.skippedNoPassword,
-        ...(debugEnabled ? { debug: await buildDebug() } : {}),
+        items: result.items,
+        ...(debugEnabled ? { debug: { ...(await buildDebug()), sample_rows: result.debug_samples } } : {}),
       })
     );
   } catch (error) {
