@@ -4,9 +4,7 @@ import { SESSION_COOKIE_NAME } from "@/lib/auth";
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from "@/lib/obs/requestId";
 import { signSession } from "@/lib/session";
 import { findUserByUsername, getRolesForUser, isStorageError, touchLastLoginAt } from "@/lib/server/controlModel";
-import { verifyPassword } from "@/lib/server/password";
-
-type DebugReason = "USER_NOT_FOUND" | "NO_PASSWORD" | "PARSE_FAIL" | "VERIFY_FAIL" | "OK";
+import { type PasswordHashFormat, type PasswordVerifyPath, verifyPassword } from "@/lib/server/password";
 
 type LoginDebug = {
   env: {
@@ -20,20 +18,26 @@ type LoginDebug = {
   };
   user_lookup: {
     found: boolean;
-    matched_by: "username" | "login" | "none";
-    user_id_present: boolean;
+    id?: string;
+    username?: string;
+    is_active?: boolean;
+    roles?: string[];
   };
   stored_password: {
-    kind: "empty" | "plain" | "scrypt" | "unknown";
-    prefix: string;
-    length: number;
-    scrypt_parts_ok: boolean;
-    scrypt_N: number | null;
+    kind: PasswordHashFormat | "unknown";
+    N?: number | null;
+    salt_hex_len?: number;
+    dk_hex_len?: number;
+    key_len?: number;
   };
   verify: {
     attempted: boolean;
+    triedStandard: boolean;
+    triedLegacy: boolean;
+    matched: boolean;
     result: "pass" | "fail" | "skip";
-    reason_code: DebugReason;
+    reason_code: "OK" | "MISMATCH" | "TOKEN_PARSE_FAIL" | "EXCEPTION" | "USER_NOT_FOUND" | "NO_PASSWORD";
+    verify_path: PasswordVerifyPath;
   };
   response: {
     http_status: number;
@@ -49,68 +53,6 @@ function getDebugContext(request: Request): { includeDebug: boolean; vercelEnv: 
   const includeDebug = debugFlag && vercelEnv !== "production";
 
   return { includeDebug, vercelEnv, nodeEnv };
-}
-
-function parseScryptHeader(stored: string): { ok: boolean; N: number | null } {
-  const parts = stored.split("$");
-  if (parts.length !== 4 || parts[0] !== "scrypt") {
-    return { ok: false, N: null };
-  }
-
-  const N = parseInt(parts[1] ?? "", 10);
-  const saltHex = parts[2] ?? "";
-  const dkHex = parts[3] ?? "";
-  if (!Number.isInteger(N)) {
-    return { ok: false, N: null };
-  }
-
-  if (!/^[0-9a-f]+$/i.test(saltHex) || !/^[0-9a-f]+$/i.test(dkHex) || saltHex.length % 2 !== 0 || dkHex.length % 2 !== 0) {
-    return { ok: false, N };
-  }
-
-  return { ok: true, N };
-}
-
-function inspectStoredPassword(raw: unknown): LoginDebug["stored_password"] {
-  if (typeof raw !== "string") {
-    return {
-      kind: "unknown",
-      prefix: "",
-      length: 0,
-      scrypt_parts_ok: false,
-      scrypt_N: null,
-    };
-  }
-
-  const stored = raw;
-  if (!stored) {
-    return {
-      kind: "empty",
-      prefix: "",
-      length: 0,
-      scrypt_parts_ok: false,
-      scrypt_N: null,
-    };
-  }
-
-  if (stored.startsWith("scrypt$")) {
-    const parsed = parseScryptHeader(stored);
-    return {
-      kind: "scrypt",
-      prefix: stored.slice(0, 10),
-      length: stored.length,
-      scrypt_parts_ok: parsed.ok,
-      scrypt_N: parsed.N,
-    };
-  }
-
-  return {
-    kind: "plain",
-    prefix: stored.slice(0, 10),
-    length: stored.length,
-    scrypt_parts_ok: false,
-    scrypt_N: null,
-  };
 }
 
 function withDebug(
@@ -163,7 +105,6 @@ export async function POST(request: Request) {
       : hasUsername
         ? String((body as { username: string }).username)
         : "";
-    const matchedBy: "username" | "login" | "none" = hasLogin ? "login" : hasUsername ? "username" : "none";
 
     const username = loginValue.trim();
     const password = typeof (body as { password?: unknown })?.password === "string" ? (body as { password: string }).password : "";
@@ -178,23 +119,54 @@ export async function POST(request: Request) {
         includeDebug,
         {
           request: { has_username: hasUsername, has_login: hasLogin, payload_keys: payloadKeys },
-          user_lookup: { found: false, matched_by: matchedBy, user_id_present: false },
-          stored_password: { kind: "empty", prefix: "", length: 0, scrypt_parts_ok: false, scrypt_N: null },
-          verify: { attempted: false, result: "skip", reason_code: "USER_NOT_FOUND" },
+          user_lookup: { found: false },
+          stored_password: { kind: "empty" },
+          verify: {
+            attempted: false,
+            triedStandard: false,
+            triedLegacy: false,
+            matched: false,
+            result: "skip",
+            reason_code: "USER_NOT_FOUND",
+            verify_path: "plain",
+          },
         },
         env
       );
     }
 
-    const storedRaw = user.password;
-    const stored = typeof storedRaw === "string" ? storedRaw : "";
-    const storedInfo = inspectStoredPassword(storedRaw);
+    const stored = typeof user.password === "string" ? user.password : "";
     const checked = await verifyPassword(password, stored);
 
-    if (!checked.ok) {
-      const reasonCode: DebugReason =
-        storedInfo.kind === "empty" ? "NO_PASSWORD" : checked.reason === "HASH_PARSE_FAILED" ? "PARSE_FAIL" : "VERIFY_FAIL";
+    const userRoles = await getRolesForUser(user.id);
 
+    const storedPasswordMeta: LoginDebug["stored_password"] =
+      checked.hashFormat === "scrypt"
+        ? {
+            kind: checked.tokenMeta?.kind ?? "unknown",
+            N: checked.tokenMeta?.N ?? null,
+            salt_hex_len: checked.tokenMeta?.saltHexLen ?? 0,
+            dk_hex_len: checked.tokenMeta?.dkHexLen ?? 0,
+            key_len: checked.tokenMeta?.keyLen ?? 0,
+          }
+        : {
+            kind: checked.hashFormat,
+          };
+
+    const verifyDebug: LoginDebug["verify"] = {
+      attempted: checked.verify.attempted,
+      triedStandard: checked.verify.triedStandard,
+      triedLegacy: checked.verify.triedLegacy,
+      matched: checked.verify.matched,
+      result: checked.verify.matched ? "pass" : "fail",
+      reason_code:
+        checked.hashFormat === "empty"
+          ? "NO_PASSWORD"
+          : checked.verify.reason_code,
+      verify_path: checked.verifyPath,
+    };
+
+    if (!checked.ok) {
       return withDebug(
         requestId,
         401,
@@ -203,9 +175,9 @@ export async function POST(request: Request) {
         includeDebug,
         {
           request: { has_username: hasUsername, has_login: hasLogin, payload_keys: payloadKeys },
-          user_lookup: { found: true, matched_by: matchedBy, user_id_present: Boolean(user.id) },
-          stored_password: storedInfo,
-          verify: { attempted: true, result: "fail", reason_code: reasonCode },
+          user_lookup: { found: true, id: user.id, username: user.username, is_active: user.is_active, roles: userRoles },
+          stored_password: storedPasswordMeta,
+          verify: verifyDebug,
         },
         env
       );
@@ -220,15 +192,14 @@ export async function POST(request: Request) {
         includeDebug,
         {
           request: { has_username: hasUsername, has_login: hasLogin, payload_keys: payloadKeys },
-          user_lookup: { found: true, matched_by: matchedBy, user_id_present: Boolean(user.id) },
-          stored_password: storedInfo,
-          verify: { attempted: true, result: "pass", reason_code: "OK" },
+          user_lookup: { found: true, id: user.id, username: user.username, is_active: user.is_active, roles: userRoles },
+          stored_password: storedPasswordMeta,
+          verify: verifyDebug,
         },
         env
       );
     }
 
-    const roles = await getRolesForUser(user.id);
     const now = new Date();
     await touchLastLoginAt(user.id, now.toISOString());
 
@@ -236,13 +207,13 @@ export async function POST(request: Request) {
       requestId,
       200,
       "OK",
-      { ok: true, role: roles },
+      { ok: true, role: userRoles },
       includeDebug,
       {
         request: { has_username: hasUsername, has_login: hasLogin, payload_keys: payloadKeys },
-        user_lookup: { found: true, matched_by: matchedBy, user_id_present: Boolean(user.id) },
-        stored_password: storedInfo,
-        verify: { attempted: true, result: "pass", reason_code: "OK" },
+        user_lookup: { found: true, id: user.id, username: user.username, is_active: user.is_active, roles: userRoles },
+        stored_password: storedPasswordMeta,
+        verify: verifyDebug,
       },
       env
     );
@@ -252,7 +223,7 @@ export async function POST(request: Request) {
       value: signSession({
         user_id: user.id,
         username: user.username,
-        roles,
+        roles: userRoles,
         exp: Math.floor(now.getTime() / 1000) + 60 * 60 * 8,
       }),
       httpOnly: true,
