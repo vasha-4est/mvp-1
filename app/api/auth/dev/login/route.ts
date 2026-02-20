@@ -17,14 +17,14 @@ function json(requestId: string, status: number, body: Record<string, unknown>) 
   });
 }
 
-function extractRole(body: unknown): string | null {
+function extractRole(body: unknown): string {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    return null;
+    return "OWNER";
   }
 
   const bodyRole = (body as LoginBody).role;
   if (typeof bodyRole !== "string" || !bodyRole.trim()) {
-    return null;
+    return "OWNER";
   }
 
   return bodyRole.trim().toUpperCase();
@@ -45,7 +45,7 @@ export async function POST(request: Request) {
   }
 
   const role = extractRole(body);
-  if (!role || !isAllowedRole(role)) {
+  if (!isAllowedRole(role)) {
     return json(requestId, 400, {
       ok: false,
       error: "Field 'role' must be one of: OWNER, COO, VIEWER",

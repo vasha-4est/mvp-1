@@ -12,6 +12,7 @@ export type UserRecord = {
   id: string;
   username: string;
   password_hash: string;
+  password?: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -182,13 +183,42 @@ export function normalizeRoleList(roles: unknown): AllowedRole[] | null {
 
 export async function findUserByUsername(username: string): Promise<UserRecord | null> {
   const lookup = username.trim().toLowerCase();
-  const store = await readStore();
 
+  if (process.env.GAS_WEBAPP_URL) {
+    const requestId = randomUUID();
+    const source = await readUsersDirectoryFromGas(requestId);
+    const gasUser = source.users.find((item) => item.username.trim().toLowerCase() === lookup);
+
+    if (gasUser) {
+      const isActive = parseBool(gasUser.is_active);
+      return {
+        id: gasUser.id,
+        username: gasUser.username,
+        password_hash: gasUser.password_hash,
+        password: gasUser.password,
+        is_active: isActive,
+        created_at: new Date(0).toISOString(),
+        updated_at: new Date(0).toISOString(),
+        last_login_at: null,
+      };
+    }
+  }
+
+  const store = await readStore();
   const user = store.users.find((item) => item.username.trim().toLowerCase() === lookup);
   return user ?? null;
 }
 
 export async function getRolesForUser(userId: string): Promise<AllowedRole[]> {
+  if (process.env.GAS_WEBAPP_URL) {
+    const requestId = randomUUID();
+    const source = await readUsersDirectoryFromGas(requestId);
+    const gasUser = source.users.find((item) => item.id.trim() === userId.trim());
+    if (gasUser) {
+      return parseRoles(gasUser.roles);
+    }
+  }
+
   const store = await readStore();
   return store.user_roles
     .filter((item) => item.user_id === userId)
