@@ -9,6 +9,10 @@ import { verifyPassword } from "@/lib/server/password";
 type DebugReason = "USER_NOT_FOUND" | "NO_PASSWORD" | "PARSE_FAIL" | "VERIFY_FAIL" | "OK";
 
 type LoginDebug = {
+  env: {
+    vercel_env: string;
+    node_env: string;
+  };
   request: {
     has_username: boolean;
     has_login: boolean;
@@ -37,9 +41,14 @@ type LoginDebug = {
   };
 };
 
-function shouldIncludeDebug(request: Request): boolean {
+function getDebugContext(request: Request): { includeDebug: boolean; vercelEnv: string; nodeEnv: string } {
   const url = new URL(request.url);
-  return url.searchParams.get("debug") === "1" && process.env.NODE_ENV !== "production";
+  const debugFlag = url.searchParams.get("debug") === "1";
+  const vercelEnv = process.env.VERCEL_ENV || "unknown";
+  const nodeEnv = process.env.NODE_ENV || "unknown";
+  const includeDebug = debugFlag && vercelEnv !== "production";
+
+  return { includeDebug, vercelEnv, nodeEnv };
 }
 
 function parseScryptHeader(stored: string): { ok: boolean; N: number | null } {
@@ -110,12 +119,14 @@ function withDebug(
   code: string,
   body: Record<string, unknown>,
   includeDebug: boolean,
-  debugData: Omit<LoginDebug, "response">
+  debugData: Omit<LoginDebug, "response" | "env">,
+  env: LoginDebug["env"]
 ) {
   const payload = includeDebug
     ? {
         ...body,
         debug: {
+          env,
           ...debugData,
           response: {
             http_status: status,
@@ -133,7 +144,8 @@ function withDebug(
 
 export async function POST(request: Request) {
   const requestId = getOrCreateRequestId(request);
-  const includeDebug = shouldIncludeDebug(request);
+  const { includeDebug, vercelEnv, nodeEnv } = getDebugContext(request);
+  const env = { vercel_env: vercelEnv, node_env: nodeEnv };
 
   try {
     let body: unknown = null;
@@ -169,7 +181,8 @@ export async function POST(request: Request) {
           user_lookup: { found: false, matched_by: matchedBy, user_id_present: false },
           stored_password: { kind: "empty", prefix: "", length: 0, scrypt_parts_ok: false, scrypt_N: null },
           verify: { attempted: false, result: "skip", reason_code: "USER_NOT_FOUND" },
-        }
+        },
+        env
       );
     }
 
@@ -193,7 +206,8 @@ export async function POST(request: Request) {
           user_lookup: { found: true, matched_by: matchedBy, user_id_present: Boolean(user.id) },
           stored_password: storedInfo,
           verify: { attempted: true, result: "fail", reason_code: reasonCode },
-        }
+        },
+        env
       );
     }
 
@@ -209,7 +223,8 @@ export async function POST(request: Request) {
           user_lookup: { found: true, matched_by: matchedBy, user_id_present: Boolean(user.id) },
           stored_password: storedInfo,
           verify: { attempted: true, result: "pass", reason_code: "OK" },
-        }
+        },
+        env
       );
     }
 
@@ -228,7 +243,8 @@ export async function POST(request: Request) {
         user_lookup: { found: true, matched_by: matchedBy, user_id_present: Boolean(user.id) },
         stored_password: storedInfo,
         verify: { attempted: true, result: "pass", reason_code: "OK" },
-      }
+      },
+      env
     );
 
     response.cookies.set({
