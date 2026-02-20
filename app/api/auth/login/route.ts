@@ -40,6 +40,8 @@ type LoginDebug = {
     reason_code: "OK" | "OK_LEGACY" | "MISMATCH" | "TOKEN_PARSE_FAIL" | "EXCEPTION" | "USER_NOT_FOUND" | "NO_PASSWORD";
     verify_path: PasswordVerifyPath;
     which_variant: "standard" | "legacy_utf8_salt" | "legacy_default" | null;
+    triedPaths: string[];
+    matched_path: string | null;
   };
   response: {
     http_status: number;
@@ -133,6 +135,8 @@ export async function POST(request: Request) {
             reason_code: "USER_NOT_FOUND",
             verify_path: "plain",
             which_variant: null,
+            triedPaths: [],
+            matched_path: null,
           },
         },
         env
@@ -170,6 +174,8 @@ export async function POST(request: Request) {
           : checked.verify.reason_code,
       verify_path: checked.verifyPath,
       which_variant: checked.verify.which_variant,
+      triedPaths: checked.verify.triedPaths,
+      matched_path: checked.verify.matched_path,
     };
 
     if (!checked.ok) {
