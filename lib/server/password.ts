@@ -9,48 +9,57 @@ export type PasswordVerifyPath = "new" | "legacy" | "plain";
 type ParsedScrypt = {
   N: number;
   saltHex: string;
-  saltBuf: Buffer;
+  saltBytes: Buffer;
   expected: Buffer;
 };
 
 export async function hashPassword(password: string, cost = 12): Promise<string> {
-  const saltBuf = randomBytes(16);
-  const saltHex = saltBuf.toString("hex");
+  const saltBytes = randomBytes(16);
+  const saltHex = saltBytes.toString("hex");
   const keyLength = 64;
   const N = 2 ** Math.max(12, cost);
-  const derived = scryptSync(password, saltBuf, keyLength, { N, r: 8, p: 1 }).toString("hex");
-  return `${PREFIX}$${N}$${saltHex}$${derived}`;
+  const derivedHex = scryptSync(password, saltBytes, keyLength, { N, r: 8, p: 1 }).toString("hex");
+  return `${PREFIX}$${N}$${saltHex}$${derivedHex}`;
 }
 
 function parseScrypt(stored: string): ParsedScrypt | null {
   const parts = stored.split("$");
-  if (parts.length !== 4) return null;
-  if (parts[0] !== PREFIX) return null;
+  if (parts.length !== 4 || parts[0] !== PREFIX) {
+    return null;
+  }
 
   const N = parseInt(parts[1] ?? "", 10);
   const saltHex = parts[2] ?? "";
-  const dkHex = parts[3] ?? "";
+  const expectedHex = parts[3] ?? "";
 
-  if (!Number.isInteger(N) || N <= 0) return null;
-  if (!/^[0-9a-f]+$/i.test(saltHex) || !/^[0-9a-f]+$/i.test(dkHex) || saltHex.length % 2 !== 0 || dkHex.length % 2 !== 0) {
+  if (!Number.isInteger(N) || N <= 0) {
     return null;
   }
 
-  const saltBuf = Buffer.from(saltHex, "hex");
-  const expected = Buffer.from(dkHex, "hex");
-  if (saltBuf.length === 0 || expected.length === 0) {
+  if (
+    !/^[0-9a-f]+$/i.test(saltHex) ||
+    !/^[0-9a-f]+$/i.test(expectedHex) ||
+    saltHex.length % 2 !== 0 ||
+    expectedHex.length % 2 !== 0
+  ) {
     return null;
   }
 
-  return { N, saltHex, saltBuf, expected };
+  const saltBytes = Buffer.from(saltHex, "hex");
+  const expected = Buffer.from(expectedHex, "hex");
+  if (saltBytes.length === 0 || expected.length === 0) {
+    return null;
+  }
+
+  return { N, saltHex, saltBytes, expected };
 }
 
-function verifyDerived(derived: Buffer, expected: Buffer): boolean {
-  if (derived.length !== expected.length) {
+function safeEqual(left: Buffer, right: Buffer): boolean {
+  if (left.length !== right.length) {
     return false;
   }
 
-  return timingSafeEqual(derived, expected);
+  return timingSafeEqual(left, right);
 }
 
 export function verifyScrypt(password: string, stored: string): { ok: boolean; verifyPath: "new" | "legacy" } | null {
@@ -59,13 +68,13 @@ export function verifyScrypt(password: string, stored: string): { ok: boolean; v
     return null;
   }
 
-  const derivedNew = scryptSync(password, parsed.saltBuf, parsed.expected.length, {
+  const derivedNew = scryptSync(password, parsed.saltBytes, parsed.expected.length, {
     N: parsed.N,
     r: 8,
     p: 1,
   });
 
-  if (verifyDerived(derivedNew, parsed.expected)) {
+  if (safeEqual(derivedNew, parsed.expected)) {
     return { ok: true, verifyPath: "new" };
   }
 
@@ -75,7 +84,7 @@ export function verifyScrypt(password: string, stored: string): { ok: boolean; v
     p: 1,
   });
 
-  if (verifyDerived(derivedLegacy, parsed.expected)) {
+  if (safeEqual(derivedLegacy, parsed.expected)) {
     return { ok: true, verifyPath: "legacy" };
   }
 
