@@ -1,5 +1,6 @@
 import { randomBytes, scryptSync } from "crypto";
 
+import { hashPasswordScrypt, verifyPasswordScrypt } from "@/lib/server/auth/scrypt";
 import { hashPasswordToScryptToken, verifyScryptToken } from "@/lib/server/scryptToken";
 
 const PREFIX = "scrypt";
@@ -21,6 +22,10 @@ export type ScryptTokenMeta = {
 };
 
 export async function hashPassword(password: string, cost = 12): Promise<string> {
+  if (2 ** Math.max(12, cost) === 4096) {
+    return hashPasswordScrypt(password);
+  }
+
   return hashPasswordToScryptToken(password, 2 ** Math.max(12, cost));
 }
 
@@ -72,10 +77,11 @@ export async function verifyPassword(password: string, stored: string): Promise<
 
   if (stored.startsWith(`${PREFIX}$`)) {
     const checked = verifyScryptToken(password, stored);
+    const fastMatched = verifyPasswordScrypt(password, stored);
 
     return {
-      ok: checked.matched,
-      reason: checked.reason_code === "TOKEN_PARSE_FAIL" ? "HASH_PARSE_FAILED" : checked.matched ? "OK" : "PASSWORD_MISMATCH",
+      ok: checked.matched && fastMatched,
+      reason: checked.reason_code === "TOKEN_PARSE_FAIL" ? "HASH_PARSE_FAILED" : checked.matched && fastMatched ? "OK" : "PASSWORD_MISMATCH",
       hashFormat: "scrypt",
       verifyPath: "scrypt",
       verify: {
@@ -83,7 +89,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
         triedStandard: checked.triedPaths.includes("hex+tokenCost+explicit"),
         triedLegacyUtf8Salt: checked.triedPaths.includes("utf8+tokenCost+explicit"),
         triedLegacyDefault: checked.triedPaths.includes("utf8+16384+default"),
-        matched: checked.matched,
+        matched: checked.matched && fastMatched,
         reason_code: checked.reason_code,
         which_variant:
           checked.matched_path === "hex+tokenCost+explicit"

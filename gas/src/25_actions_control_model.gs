@@ -208,6 +208,7 @@
     const passwordHashIndex = normalized.indexOf('password_hash');
     const passwordIndex = normalized.indexOf('password');
     const updatedAtIndex = normalized.indexOf('updated_at');
+    const mustChangePasswordIndex = normalized.indexOf('must_change_password');
 
     if (idIndex === -1 || (passwordHashIndex === -1 && passwordIndex === -1)) {
       invalidSheetError_({
@@ -250,6 +251,9 @@
       }
 
       row[mode === 'password_hash' ? passwordHashIndex : passwordIndex] = byId[id];
+      if (mustChangePasswordIndex !== -1) {
+        row[mustChangePasswordIndex] = true;
+      }
       if (updatedAtIndex !== -1) {
         row[updatedAtIndex] = nowIso_();
       }

@@ -2,7 +2,7 @@ import { promises as fs } from "fs";
 import { randomUUID } from "crypto";
 import path from "path";
 
-import { hashPasswordToScryptToken } from "@/lib/server/scryptToken";
+import { hashPasswordScrypt } from "@/lib/server/auth/scrypt";
 import { readUsersDirectoryFromGas, writeUsersDirectoryHashes } from "@/lib/server/usersDirectory";
 
 export const ALLOWED_ROLES = ["OWNER", "COO", "VIEWER"] as const;
@@ -465,7 +465,7 @@ export async function provisionUsers(): Promise<{
       pushSample({ id, username, action: "alreadyHashed", password_kind_detected: "scrypt" });
       hashToStore = passwordValue;
     } else if (passwordKind === "plaintext") {
-      const hashed = await hashPasswordToScryptToken(passwordValue, 4096);
+      const hashed = await hashPasswordScrypt(passwordValue);
       hashUpdates.push({ id, password_hash: hashed });
       migratedLegacy += 1;
       items.push({ id, username, status: "provisioned" });
