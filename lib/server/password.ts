@@ -7,7 +7,7 @@ type VerifyReasonCode = "OK" | "MISMATCH" | "TOKEN_PARSE_FAIL" | "EXCEPTION";
 
 export type PasswordCheckReason = "OK" | "HASH_PARSE_FAILED" | "PASSWORD_MISMATCH";
 export type PasswordHashFormat = "scrypt" | "plain" | "empty";
-export type PasswordVerifyPath = "new" | "legacy" | "plain";
+export type PasswordVerifyPath = "raw_bytes" | "utf8_hex" | "plain";
 
 export type ScryptTokenMeta = {
   kind: "scrypt" | "unknown";
@@ -31,11 +31,11 @@ type ParsedScryptToken = {
 
 export type ScryptVerifyResult = {
   attempted: boolean;
-  triedStandard: boolean;
-  triedLegacy: boolean;
+  triedRawBytes: boolean;
+  triedUtf8Hex: boolean;
   matched: boolean;
   reasonCode: VerifyReasonCode;
-  verifyPath: "new" | "legacy";
+  whichVariant: "raw_bytes" | "utf8_hex" | null;
   meta: ScryptTokenMeta;
 };
 
@@ -118,11 +118,11 @@ export function verifyScrypt(password: string, stored: string): ScryptVerifyResu
   if (!parsed) {
     return {
       attempted: true,
-      triedStandard: false,
-      triedLegacy: false,
+      triedRawBytes: false,
+      triedUtf8Hex: false,
       matched: false,
       reasonCode: "TOKEN_PARSE_FAIL",
-      verifyPath: "new",
+      whichVariant: null,
       meta: unknownScryptMeta(stored),
     };
   }
@@ -137,11 +137,11 @@ export function verifyScrypt(password: string, stored: string): ScryptVerifyResu
     if (safeEqual(derivedStandard, parsed.expectedBytes)) {
       return {
         attempted: true,
-        triedStandard: true,
-        triedLegacy: false,
+        triedRawBytes: true,
+        triedUtf8Hex: false,
         matched: true,
         reasonCode: "OK",
-        verifyPath: "new",
+        whichVariant: "raw_bytes",
         meta: {
           kind: "scrypt",
           N: parsed.N,
@@ -161,11 +161,11 @@ export function verifyScrypt(password: string, stored: string): ScryptVerifyResu
     if (safeEqual(derivedLegacy, parsed.expectedBytes)) {
       return {
         attempted: true,
-        triedStandard: true,
-        triedLegacy: true,
+        triedRawBytes: true,
+        triedUtf8Hex: true,
         matched: true,
         reasonCode: "OK",
-        verifyPath: "legacy",
+        whichVariant: "utf8_hex",
         meta: {
           kind: "scrypt",
           N: parsed.N,
@@ -178,11 +178,11 @@ export function verifyScrypt(password: string, stored: string): ScryptVerifyResu
 
     return {
       attempted: true,
-      triedStandard: true,
-      triedLegacy: true,
+      triedRawBytes: true,
+      triedUtf8Hex: true,
       matched: false,
       reasonCode: "MISMATCH",
-      verifyPath: "legacy",
+      whichVariant: null,
       meta: {
         kind: "scrypt",
         N: parsed.N,
@@ -194,11 +194,11 @@ export function verifyScrypt(password: string, stored: string): ScryptVerifyResu
   } catch {
     return {
       attempted: true,
-      triedStandard: true,
-      triedLegacy: true,
+      triedRawBytes: true,
+      triedUtf8Hex: true,
       matched: false,
       reasonCode: "EXCEPTION",
-      verifyPath: "legacy",
+      whichVariant: null,
       meta: {
         kind: "scrypt",
         N: parsed.N,
@@ -225,10 +225,11 @@ export async function verifyPassword(password: string, stored: string): Promise<
   verifyPath: PasswordVerifyPath;
   verify: {
     attempted: boolean;
-    triedStandard: boolean;
-    triedLegacy: boolean;
+    triedRawBytes: boolean;
+    triedUtf8Hex: boolean;
     matched: boolean;
     reason_code: VerifyReasonCode;
+    which_variant: "raw_bytes" | "utf8_hex" | null;
   };
   tokenMeta: ScryptTokenMeta | null;
 }> {
@@ -238,7 +239,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
       reason: "PASSWORD_MISMATCH",
       hashFormat: "empty",
       verifyPath: "plain",
-      verify: { attempted: false, triedStandard: false, triedLegacy: false, matched: false, reason_code: "MISMATCH" },
+      verify: { attempted: false, triedRawBytes: false, triedUtf8Hex: false, matched: false, reason_code: "MISMATCH", which_variant: null },
       tokenMeta: null,
     };
   }
@@ -249,11 +250,12 @@ export async function verifyPassword(password: string, stored: string): Promise<
       ok: checked.matched,
       reason: checked.reasonCode === "TOKEN_PARSE_FAIL" ? "HASH_PARSE_FAILED" : checked.matched ? "OK" : "PASSWORD_MISMATCH",
       hashFormat: "scrypt",
-      verifyPath: checked.verifyPath,
+      verifyPath: checked.whichVariant ?? "plain",
       verify: {
         attempted: checked.attempted,
-        triedStandard: checked.triedStandard,
-        triedLegacy: checked.triedLegacy,
+        triedRawBytes: checked.triedRawBytes,
+        triedUtf8Hex: checked.triedUtf8Hex,
+        which_variant: checked.whichVariant,
         matched: checked.matched,
         reason_code: checked.reasonCode,
       },
@@ -267,7 +269,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
     reason: ok ? "OK" : "PASSWORD_MISMATCH",
     hashFormat: "plain",
     verifyPath: "plain",
-    verify: { attempted: true, triedStandard: false, triedLegacy: false, matched: ok, reason_code: ok ? "OK" : "MISMATCH" },
+    verify: { attempted: true, triedRawBytes: false, triedUtf8Hex: false, matched: ok, reason_code: ok ? "OK" : "MISMATCH", which_variant: null },
     tokenMeta: null,
   };
 }

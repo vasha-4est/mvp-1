@@ -33,12 +33,13 @@ type LoginDebug = {
   };
   verify: {
     attempted: boolean;
-    triedStandard: boolean;
-    triedLegacy: boolean;
+    triedRawBytes: boolean;
+    triedUtf8Hex: boolean;
     matched: boolean;
     result: "pass" | "fail" | "skip";
     reason_code: "OK" | "MISMATCH" | "TOKEN_PARSE_FAIL" | "EXCEPTION" | "USER_NOT_FOUND" | "NO_PASSWORD";
     verify_path: PasswordVerifyPath;
+    which_variant: "utf8_hex" | "raw_bytes" | null;
   };
   response: {
     http_status: number;
@@ -124,12 +125,13 @@ export async function POST(request: Request) {
           stored_password: { kind: "empty" },
           verify: {
             attempted: false,
-            triedStandard: false,
-            triedLegacy: false,
+            triedRawBytes: false,
+            triedUtf8Hex: false,
             matched: false,
             result: "skip",
             reason_code: "USER_NOT_FOUND",
             verify_path: "plain",
+            which_variant: null,
           },
         },
         env
@@ -156,8 +158,8 @@ export async function POST(request: Request) {
 
     const verifyDebug: LoginDebug["verify"] = {
       attempted: checked.verify.attempted,
-      triedStandard: checked.verify.triedStandard,
-      triedLegacy: checked.verify.triedLegacy,
+      triedRawBytes: checked.verify.triedRawBytes,
+      triedUtf8Hex: checked.verify.triedUtf8Hex,
       matched: checked.verify.matched,
       result: checked.verify.matched ? "pass" : "fail",
       reason_code:
@@ -165,6 +167,7 @@ export async function POST(request: Request) {
           ? "NO_PASSWORD"
           : checked.verify.reason_code,
       verify_path: checked.verifyPath,
+      which_variant: checked.verify.which_variant,
     };
 
     if (!checked.ok) {
@@ -187,7 +190,7 @@ export async function POST(request: Request) {
     if (
       checked.ok &&
       checked.hashFormat === "scrypt" &&
-      checked.verifyPath === "legacy" &&
+      checked.verifyPath === "utf8_hex" &&
       process.env.GAS_WEBAPP_URL &&
       user.id
     ) {
