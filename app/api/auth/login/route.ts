@@ -4,9 +4,15 @@ import { SESSION_COOKIE_NAME } from "@/lib/auth";
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from "@/lib/obs/requestId";
 import { signSession } from "@/lib/session";
 import { findUserByUsername, getRolesForUser, isStorageError, touchLastLoginAt } from "@/lib/server/controlModel";
-import { verifyPassword } from "@/lib/server/password";
+import { type PasswordVerifyPath, verifyPassword } from "@/lib/server/password";
 
 type DebugReason = "HASH_PARSE_FAILED" | "PASSWORD_MISMATCH" | "USER_NOT_FOUND" | "OK";
+
+type DebugPayload = {
+  password_check_reason: DebugReason;
+  hash_format: "scrypt" | "plain" | "empty";
+  verify_path: PasswordVerifyPath;
+};
 
 function shouldIncludeDebug(request: Request): boolean {
   const url = new URL(request.url);
@@ -18,12 +24,22 @@ function json(
   status: number,
   body: Record<string, unknown>,
   includeDebug: boolean,
-  debugReason?: DebugReason
+  debugReason?: DebugReason,
+  debugExtra?: DebugPayload
 ) {
-  return NextResponse.json(includeDebug && debugReason ? { ...body, debug_reason: debugReason } : body, {
-    status,
-    headers: { [REQUEST_ID_HEADER]: requestId },
-  });
+  return NextResponse.json(
+    includeDebug && debugReason
+      ? {
+          ...body,
+          debug_reason: debugReason,
+          ...(debugExtra ? { debug: debugExtra } : {}),
+        }
+      : body,
+    {
+      status,
+      headers: { [REQUEST_ID_HEADER]: requestId },
+    }
+  );
 }
 
 export async function POST(request: Request) {
@@ -62,25 +78,40 @@ export async function POST(request: Request) {
 
     const stored = String(user.password ?? "");
     const checked = await verifyPassword(password, stored);
+    const debugPayload: DebugPayload = {
+      password_check_reason: checked.reason === "OK" ? "OK" : checked.reason,
+      hash_format: checked.hashFormat,
+      verify_path: checked.verifyPath,
+    };
+
     if (!checked.ok) {
+      const debugReason = checked.reason === "HASH_PARSE_FAILED" ? "HASH_PARSE_FAILED" : "PASSWORD_MISMATCH";
       return json(
         requestId,
         401,
         { ok: false, error: "Invalid username or password", code: "INVALID_CREDENTIALS" },
         includeDebug,
-        checked.reason === "HASH_PARSE_FAILED" ? "HASH_PARSE_FAILED" : "PASSWORD_MISMATCH"
+        debugReason,
+        debugPayload
       );
     }
 
     if (!user.is_active) {
-      return json(requestId, 403, { ok: false, error: "Account inactive", code: "ACCOUNT_INACTIVE" }, includeDebug, "OK");
+      return json(
+        requestId,
+        403,
+        { ok: false, error: "Account inactive", code: "ACCOUNT_INACTIVE" },
+        includeDebug,
+        "OK",
+        debugPayload
+      );
     }
 
     const roles = await getRolesForUser(user.id);
     const now = new Date();
     await touchLastLoginAt(user.id, now.toISOString());
 
-    const response = json(requestId, 200, { ok: true, role: roles }, includeDebug, "OK");
+    const response = json(requestId, 200, { ok: true, role: roles }, includeDebug, "OK", debugPayload);
     response.cookies.set({
       name: SESSION_COOKIE_NAME,
       value: signSession({
