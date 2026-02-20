@@ -152,7 +152,7 @@ export function verifyScrypt(password: string, stored: string): ScryptVerifyResu
       };
     }
 
-    const derivedLegacy = scryptSync(password, Buffer.from(parsed.saltHex, "utf8"), parsed.keyLen, {
+    const derivedLegacy = scryptSync(password, parsed.saltHex, parsed.keyLen, {
       N: parsed.N,
       r: 8,
       p: 1,

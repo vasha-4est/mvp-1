@@ -4,7 +4,8 @@ import { SESSION_COOKIE_NAME } from "@/lib/auth";
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from "@/lib/obs/requestId";
 import { signSession } from "@/lib/session";
 import { findUserByUsername, getRolesForUser, isStorageError, touchLastLoginAt } from "@/lib/server/controlModel";
-import { type PasswordHashFormat, type PasswordVerifyPath, verifyPassword } from "@/lib/server/password";
+import { writeUsersDirectoryHashes } from "@/lib/server/usersDirectory";
+import { hashPassword, type PasswordHashFormat, type PasswordVerifyPath, verifyPassword } from "@/lib/server/password";
 
 type LoginDebug = {
   env: {
@@ -181,6 +182,21 @@ export async function POST(request: Request) {
         },
         env
       );
+    }
+
+    if (
+      checked.ok &&
+      checked.hashFormat === "scrypt" &&
+      checked.verifyPath === "legacy" &&
+      process.env.GAS_WEBAPP_URL &&
+      user.id
+    ) {
+      try {
+        const canonicalHash = await hashPassword(password, 12);
+        await writeUsersDirectoryHashes(requestId, [{ id: user.id, password_hash: canonicalHash }]);
+      } catch {
+        // best-effort upgrade; do not block successful login
+      }
     }
 
     if (!user.is_active) {
