@@ -4,8 +4,7 @@ import { SESSION_COOKIE_NAME } from "@/lib/auth";
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from "@/lib/obs/requestId";
 import { signSession } from "@/lib/session";
 import { findUserByUsername, getRolesForUser, isStorageError, touchLastLoginAt } from "@/lib/server/controlModel";
-import { writeUsersDirectoryHashes } from "@/lib/server/usersDirectory";
-import { hashPassword, type PasswordHashFormat, type PasswordVerifyPath, verifyPassword } from "@/lib/server/password";
+import { type PasswordHashFormat, type PasswordVerifyPath, verifyPassword } from "@/lib/server/password";
 
 type LoginDebug = {
   env: {
@@ -33,13 +32,14 @@ type LoginDebug = {
   };
   verify: {
     attempted: boolean;
-    triedRawBytes: boolean;
-    triedUtf8Hex: boolean;
+    triedStandard: boolean;
+    triedLegacyUtf8Salt: boolean;
+    triedLegacyDefault: boolean;
     matched: boolean;
     result: "pass" | "fail" | "skip";
-    reason_code: "OK" | "MISMATCH" | "TOKEN_PARSE_FAIL" | "EXCEPTION" | "USER_NOT_FOUND" | "NO_PASSWORD";
+    reason_code: "OK" | "OK_LEGACY" | "MISMATCH" | "TOKEN_PARSE_FAIL" | "EXCEPTION" | "USER_NOT_FOUND" | "NO_PASSWORD";
     verify_path: PasswordVerifyPath;
-    which_variant: "utf8_hex" | "raw_bytes" | null;
+    which_variant: "standard" | "legacy_utf8_salt" | "legacy_default" | null;
   };
   response: {
     http_status: number;
@@ -125,8 +125,9 @@ export async function POST(request: Request) {
           stored_password: { kind: "empty" },
           verify: {
             attempted: false,
-            triedRawBytes: false,
-            triedUtf8Hex: false,
+            triedStandard: false,
+            triedLegacyUtf8Salt: false,
+            triedLegacyDefault: false,
             matched: false,
             result: "skip",
             reason_code: "USER_NOT_FOUND",
@@ -158,8 +159,9 @@ export async function POST(request: Request) {
 
     const verifyDebug: LoginDebug["verify"] = {
       attempted: checked.verify.attempted,
-      triedRawBytes: checked.verify.triedRawBytes,
-      triedUtf8Hex: checked.verify.triedUtf8Hex,
+      triedStandard: checked.verify.triedStandard,
+      triedLegacyUtf8Salt: checked.verify.triedLegacyUtf8Salt,
+      triedLegacyDefault: checked.verify.triedLegacyDefault,
       matched: checked.verify.matched,
       result: checked.verify.matched ? "pass" : "fail",
       reason_code:
@@ -185,21 +187,6 @@ export async function POST(request: Request) {
         },
         env
       );
-    }
-
-    if (
-      checked.ok &&
-      checked.hashFormat === "scrypt" &&
-      checked.verifyPath === "utf8_hex" &&
-      process.env.GAS_WEBAPP_URL &&
-      user.id
-    ) {
-      try {
-        const canonicalHash = await hashPassword(password, 12);
-        await writeUsersDirectoryHashes(requestId, [{ id: user.id, password_hash: canonicalHash }]);
-      } catch {
-        // best-effort upgrade; do not block successful login
-      }
     }
 
     if (!user.is_active) {

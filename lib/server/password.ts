@@ -2,12 +2,13 @@ import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
 
 const PREFIX = "scrypt";
 const DEFAULT_N = 4096;
+const DEFAULT_KEY_LEN = 64;
 
-type VerifyReasonCode = "OK" | "MISMATCH" | "TOKEN_PARSE_FAIL" | "EXCEPTION";
+type VerifyReasonCode = "OK" | "OK_LEGACY" | "MISMATCH" | "TOKEN_PARSE_FAIL" | "EXCEPTION";
 
 export type PasswordCheckReason = "OK" | "HASH_PARSE_FAILED" | "PASSWORD_MISMATCH";
 export type PasswordHashFormat = "scrypt" | "plain" | "empty";
-export type PasswordVerifyPath = "raw_bytes" | "utf8_hex" | "plain";
+export type PasswordVerifyPath = "standard" | "legacy_utf8_salt" | "legacy_default" | "plain";
 
 export type ScryptTokenMeta = {
   kind: "scrypt" | "unknown";
@@ -18,7 +19,6 @@ export type ScryptTokenMeta = {
 };
 
 type ParsedScryptToken = {
-  kind: "scrypt";
   N: number;
   saltHex: string;
   dkHex: string;
@@ -29,23 +29,20 @@ type ParsedScryptToken = {
   dkHexLen: number;
 };
 
-export type ScryptVerifyResult = {
-  attempted: boolean;
-  triedRawBytes: boolean;
-  triedUtf8Hex: boolean;
-  matched: boolean;
-  reasonCode: VerifyReasonCode;
-  whichVariant: "raw_bytes" | "utf8_hex" | null;
-  meta: ScryptTokenMeta;
-};
+function scryptOptions(cost: number): { cost: number; blockSize: number; parallelization: number; maxmem: number } {
+  return {
+    cost,
+    blockSize: 8,
+    parallelization: 1,
+    maxmem: 64 * 1024 * 1024,
+  };
+}
 
 export async function hashPassword(password: string, cost = 12): Promise<string> {
-  const saltBytes = randomBytes(16);
-  const saltHex = saltBytes.toString("hex");
-  const keyLength = 64;
-  const N = 2 ** Math.max(12, cost);
-  const derivedHex = scryptSync(password, saltBytes, keyLength, { N, r: 8, p: 1 }).toString("hex");
-  return `${PREFIX}$${N}$${saltHex}$${derivedHex}`;
+  const salt = randomBytes(16);
+  const saltHex = salt.toString("hex");
+  const derivedHex = scryptSync(password, salt, DEFAULT_KEY_LEN, scryptOptions(2 ** Math.max(12, cost))).toString("hex");
+  return `${PREFIX}$${2 ** Math.max(12, cost)}$${saltHex}$${derivedHex}`;
 }
 
 export function parseScryptToken(stored: string): ParsedScryptToken | null {
@@ -78,7 +75,6 @@ export function parseScryptToken(stored: string): ParsedScryptToken | null {
   }
 
   return {
-    kind: "scrypt",
     N,
     saltHex,
     dkHex,
@@ -107,19 +103,29 @@ function unknownScryptMeta(stored: string): ScryptTokenMeta {
   return {
     kind: "unknown",
     N: Number.isInteger(maybeN) && maybeN > 1 ? maybeN : null,
-    saltHexLen: typeof saltHex === "string" ? saltHex.length : 0,
-    dkHexLen: typeof dkHex === "string" ? dkHex.length : 0,
-    keyLen: typeof dkHex === "string" && dkHex.length % 2 === 0 ? dkHex.length / 2 : 0,
+    saltHexLen: saltHex.length,
+    dkHexLen: dkHex.length,
+    keyLen: dkHex.length > 0 && dkHex.length % 2 === 0 ? dkHex.length / 2 : 0,
   };
 }
 
-export function verifyScrypt(password: string, stored: string): ScryptVerifyResult {
+export function verifyScrypt(password: string, stored: string): {
+  attempted: boolean;
+  triedStandard: boolean;
+  triedLegacyUtf8Salt: boolean;
+  triedLegacyDefault: boolean;
+  matched: boolean;
+  reasonCode: VerifyReasonCode;
+  whichVariant: "standard" | "legacy_utf8_salt" | "legacy_default" | null;
+  meta: ScryptTokenMeta;
+} {
   const parsed = parseScryptToken(stored);
   if (!parsed) {
     return {
       attempted: true,
-      triedRawBytes: false,
-      triedUtf8Hex: false,
+      triedStandard: false,
+      triedLegacyUtf8Salt: false,
+      triedLegacyDefault: false,
       matched: false,
       reasonCode: "TOKEN_PARSE_FAIL",
       whichVariant: null,
@@ -127,94 +133,86 @@ export function verifyScrypt(password: string, stored: string): ScryptVerifyResu
     };
   }
 
-  try {
-    const derivedStandard = scryptSync(password, parsed.saltBytes, parsed.keyLen, {
-      N: parsed.N,
-      r: 8,
-      p: 1,
-    });
+  const meta: ScryptTokenMeta = {
+    kind: "scrypt",
+    N: parsed.N,
+    saltHexLen: parsed.saltHexLen,
+    dkHexLen: parsed.dkHexLen,
+    keyLen: parsed.keyLen,
+  };
 
+  try {
+    const derivedStandard = scryptSync(password, parsed.saltBytes, parsed.keyLen, scryptOptions(parsed.N));
     if (safeEqual(derivedStandard, parsed.expectedBytes)) {
       return {
         attempted: true,
-        triedRawBytes: true,
-        triedUtf8Hex: false,
+        triedStandard: true,
+        triedLegacyUtf8Salt: false,
+        triedLegacyDefault: false,
         matched: true,
         reasonCode: "OK",
-        whichVariant: "raw_bytes",
-        meta: {
-          kind: "scrypt",
-          N: parsed.N,
-          saltHexLen: parsed.saltHexLen,
-          dkHexLen: parsed.dkHexLen,
-          keyLen: parsed.keyLen,
-        },
+        whichVariant: "standard",
+        meta,
       };
     }
 
-    const derivedLegacy = scryptSync(password, parsed.saltHex, parsed.keyLen, {
-      N: parsed.N,
-      r: 8,
-      p: 1,
-    });
-
-    if (safeEqual(derivedLegacy, parsed.expectedBytes)) {
+    const legacyUtf8Salt = Buffer.from(parsed.saltHex, "utf8");
+    const derivedLegacyUtf8 = scryptSync(password, legacyUtf8Salt, parsed.keyLen, scryptOptions(parsed.N));
+    if (safeEqual(derivedLegacyUtf8, parsed.expectedBytes)) {
       return {
         attempted: true,
-        triedRawBytes: true,
-        triedUtf8Hex: true,
+        triedStandard: true,
+        triedLegacyUtf8Salt: true,
+        triedLegacyDefault: false,
         matched: true,
-        reasonCode: "OK",
-        whichVariant: "utf8_hex",
-        meta: {
-          kind: "scrypt",
-          N: parsed.N,
-          saltHexLen: parsed.saltHexLen,
-          dkHexLen: parsed.dkHexLen,
-          keyLen: parsed.keyLen,
-        },
+        reasonCode: "OK_LEGACY",
+        whichVariant: "legacy_utf8_salt",
+        meta,
+      };
+    }
+
+    const derivedLegacyDefault = scryptSync(password, legacyUtf8Salt, parsed.keyLen);
+    if (safeEqual(derivedLegacyDefault, parsed.expectedBytes)) {
+      return {
+        attempted: true,
+        triedStandard: true,
+        triedLegacyUtf8Salt: true,
+        triedLegacyDefault: true,
+        matched: true,
+        reasonCode: "OK_LEGACY",
+        whichVariant: "legacy_default",
+        meta,
       };
     }
 
     return {
       attempted: true,
-      triedRawBytes: true,
-      triedUtf8Hex: true,
+      triedStandard: true,
+      triedLegacyUtf8Salt: true,
+      triedLegacyDefault: true,
       matched: false,
       reasonCode: "MISMATCH",
       whichVariant: null,
-      meta: {
-        kind: "scrypt",
-        N: parsed.N,
-        saltHexLen: parsed.saltHexLen,
-        dkHexLen: parsed.dkHexLen,
-        keyLen: parsed.keyLen,
-      },
+      meta,
     };
   } catch {
     return {
       attempted: true,
-      triedRawBytes: true,
-      triedUtf8Hex: true,
+      triedStandard: true,
+      triedLegacyUtf8Salt: true,
+      triedLegacyDefault: true,
       matched: false,
       reasonCode: "EXCEPTION",
       whichVariant: null,
-      meta: {
-        kind: "scrypt",
-        N: parsed.N,
-        saltHexLen: parsed.saltHexLen,
-        dkHexLen: parsed.dkHexLen,
-        keyLen: parsed.keyLen,
-      },
+      meta,
     };
   }
 }
 
 export function buildLegacyScryptToken(password: string, N = DEFAULT_N): string {
-  const saltBytes = randomBytes(16);
-  const saltHex = saltBytes.toString("hex");
-  const keyLen = 64;
-  const derivedLegacyHex = scryptSync(password, Buffer.from(saltHex, "utf8"), keyLen, { N, r: 8, p: 1 }).toString("hex");
+  const salt = randomBytes(16);
+  const saltHex = salt.toString("hex");
+  const derivedLegacyHex = scryptSync(password, Buffer.from(saltHex, "utf8"), DEFAULT_KEY_LEN).toString("hex");
   return `${PREFIX}$${N}$${saltHex}$${derivedLegacyHex}`;
 }
 
@@ -225,11 +223,12 @@ export async function verifyPassword(password: string, stored: string): Promise<
   verifyPath: PasswordVerifyPath;
   verify: {
     attempted: boolean;
-    triedRawBytes: boolean;
-    triedUtf8Hex: boolean;
+    triedStandard: boolean;
+    triedLegacyUtf8Salt: boolean;
+    triedLegacyDefault: boolean;
     matched: boolean;
     reason_code: VerifyReasonCode;
-    which_variant: "raw_bytes" | "utf8_hex" | null;
+    which_variant: "standard" | "legacy_utf8_salt" | "legacy_default" | null;
   };
   tokenMeta: ScryptTokenMeta | null;
 }> {
@@ -239,7 +238,15 @@ export async function verifyPassword(password: string, stored: string): Promise<
       reason: "PASSWORD_MISMATCH",
       hashFormat: "empty",
       verifyPath: "plain",
-      verify: { attempted: false, triedRawBytes: false, triedUtf8Hex: false, matched: false, reason_code: "MISMATCH", which_variant: null },
+      verify: {
+        attempted: false,
+        triedStandard: false,
+        triedLegacyUtf8Salt: false,
+        triedLegacyDefault: false,
+        matched: false,
+        reason_code: "MISMATCH",
+        which_variant: null,
+      },
       tokenMeta: null,
     };
   }
@@ -253,11 +260,12 @@ export async function verifyPassword(password: string, stored: string): Promise<
       verifyPath: checked.whichVariant ?? "plain",
       verify: {
         attempted: checked.attempted,
-        triedRawBytes: checked.triedRawBytes,
-        triedUtf8Hex: checked.triedUtf8Hex,
-        which_variant: checked.whichVariant,
+        triedStandard: checked.triedStandard,
+        triedLegacyUtf8Salt: checked.triedLegacyUtf8Salt,
+        triedLegacyDefault: checked.triedLegacyDefault,
         matched: checked.matched,
         reason_code: checked.reasonCode,
+        which_variant: checked.whichVariant,
       },
       tokenMeta: checked.meta,
     };
@@ -269,7 +277,15 @@ export async function verifyPassword(password: string, stored: string): Promise<
     reason: ok ? "OK" : "PASSWORD_MISMATCH",
     hashFormat: "plain",
     verifyPath: "plain",
-    verify: { attempted: true, triedRawBytes: false, triedUtf8Hex: false, matched: ok, reason_code: ok ? "OK" : "MISMATCH", which_variant: null },
+    verify: {
+      attempted: true,
+      triedStandard: false,
+      triedLegacyUtf8Salt: false,
+      triedLegacyDefault: false,
+      matched: ok,
+      reason_code: ok ? "OK" : "MISMATCH",
+      which_variant: null,
+    },
     tokenMeta: null,
   };
 }
