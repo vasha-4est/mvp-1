@@ -78,14 +78,22 @@ function formatDetails(details: unknown): string {
   }
 }
 
-export default async function OwnerDashboardPage() {
+export default async function OwnerDashboardPage({
+  searchParams,
+}: {
+  searchParams?: { debug?: string };
+}) {
   requirePageRole("/owner", ["OWNER"]);
 
+  const debugEnabled = searchParams?.debug === "1";
   const { origin, cookieHeader } = getRequestContext();
-  const response = await fetch(`${origin}/api/owner/dashboard`, {
-    cache: "no-store",
-    headers: cookieHeader ? { cookie: cookieHeader } : undefined,
-  });
+  const response = await fetch(
+    `${origin}/api/owner/dashboard${debugEnabled ? "?debug=1" : ""}`,
+    {
+      cache: "no-store",
+      headers: cookieHeader ? { cookie: cookieHeader } : undefined,
+    }
+  );
 
   const requestId = response.headers.get("x-request-id") ?? "n/a";
 
@@ -95,7 +103,8 @@ export default async function OwnerDashboardPage() {
   } catch {
     return (
       <main>
-        <h1>Owner Dashboard</h1>
+        <h1>Owner</h1>
+        <h2>Dashboard</h2>
         <p role="alert">Failed to parse API response.</p>
         <small>request id: {requestId}</small>
       </main>
@@ -105,7 +114,8 @@ export default async function OwnerDashboardPage() {
   if (response.status === 401 || response.status === 403) {
     return (
       <main>
-        <h1>Owner Dashboard</h1>
+        <h1>Owner</h1>
+        <h2>Dashboard</h2>
         <p role="alert">Access denied.</p>
         <small>request id: {requestId}</small>
       </main>
@@ -115,7 +125,8 @@ export default async function OwnerDashboardPage() {
   if (!response.ok || payload?.ok === false) {
     return (
       <main>
-        <h1>Owner Dashboard</h1>
+        <h1>Owner</h1>
+        <h2>Dashboard</h2>
         <p role="alert">Failed to load dashboard.</p>
         <small>request id: {requestId}</small>
       </main>
@@ -127,9 +138,42 @@ export default async function OwnerDashboardPage() {
   const recentEvents = Array.isArray(payload?.data?.recent_events) ? payload.data.recent_events : [];
   const health = payload?.data?.health ?? {};
 
+  const metrics = [
+    { label: "Total open", value: counts.total_open ?? 0 },
+    { label: "Drying now", value: counts.drying ?? 0 },
+    { label: "Drying overdue", value: health.drying_overdue ?? 0 },
+    { label: "Events (24h)", value: health.events_last_24h ?? 0 },
+  ];
+
   return (
     <main style={{ display: "grid", gap: 20 }}>
-      <h1>Owner Dashboard</h1>
+      <h1>Owner</h1>
+      <section style={{ display: "grid", gap: 16 }}>
+        <h2>Dashboard</h2>
+
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+          }}
+        >
+          {metrics.map((metric) => (
+            <article
+              key={metric.label}
+              style={{
+                border: "1px solid #ddd",
+                borderRadius: 8,
+                padding: 12,
+                background: "#fff",
+              }}
+            >
+              <p style={{ margin: 0, color: "#555" }}>{metric.label}</p>
+              <p style={{ margin: "8px 0 0", fontSize: 24, fontWeight: 700 }}>{metric.value}</p>
+            </article>
+          ))}
+        </div>
+      </section>
 
       <section>
         <h2>WIP Summary</h2>
@@ -170,26 +214,36 @@ export default async function OwnerDashboardPage() {
       <section>
         <h2>Recent events</h2>
         <ul>
-          {recentEvents.map((event, index) => (
-            <li key={`${event.at}-${event.type}-${event.batch_code}-${index}`}>
-              {event.at ?? "—"} — {event.type ?? "—"} — {event.batch_code ?? "—"}
-              {event.actor ? ` — ${event.actor}` : ""}
-              {formatDetails(event.details) ? ` — ${formatDetails(event.details)}` : ""}
-            </li>
-          ))}
+          {recentEvents.map((event, index) => {
+            const detailsLabel = formatDetails(event.details);
+
+            return (
+              <li key={`${event.at}-${event.type}-${event.batch_code}-${index}`}>
+                {event.at ?? "—"} — {event.type ?? "—"} — {event.batch_code ?? "—"}
+                {event.actor ? ` — ${event.actor}` : ""}
+                {detailsLabel ? ` — ${detailsLabel}` : ""}
+              </li>
+            );
+          })}
         </ul>
       </section>
 
-      <section>
-        <h2>Health</h2>
-        <ul>
-          <li>wip_total_open: {health.wip_total_open ?? 0}</li>
-          <li>drying_overdue: {health.drying_overdue ?? 0}</li>
-          <li>events_last_24h: {health.events_last_24h ?? 0}</li>
-          <li>errors_last_24h: {health.errors_last_24h ?? 0}</li>
-          <li>last_event_at: {health.last_event_at ?? "—"}</li>
-        </ul>
-      </section>
+      {debugEnabled ? (
+        <section>
+          <h2>Debug</h2>
+          <pre
+            style={{
+              overflowX: "auto",
+              padding: 12,
+              border: "1px solid #ddd",
+              borderRadius: 8,
+              background: "#fafafa",
+            }}
+          >
+            {JSON.stringify(payload, null, 2)}
+          </pre>
+        </section>
+      ) : null}
     </main>
   );
 }
