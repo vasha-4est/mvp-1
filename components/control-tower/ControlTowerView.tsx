@@ -8,8 +8,7 @@ import { ControlTowerSection } from "./ControlTowerSection";
 
 type LoadState =
   | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; payload: unknown };
+  | { status: "ready"; payload: unknown; errorMessage?: string };
 
 const MAX_RECENT_EVENTS = 8;
 
@@ -106,14 +105,19 @@ export function ControlTowerView() {
       });
 
       if (!response.ok) {
-        throw new Error(`Request failed with status ${response.status}`);
+        setState({
+          status: "ready",
+          payload: {},
+          errorMessage: `Request failed with status ${response.status}`,
+        });
+        return;
       }
 
       const payload = (await response.json()) as unknown;
       setState({ status: "ready", payload });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load Control Tower data.";
-      setState({ status: "error", message });
+      setState({ status: "ready", payload: {}, errorMessage: message });
     }
   }, []);
 
@@ -125,42 +129,42 @@ export function ControlTowerView() {
     return <ControlTowerLoadingState />;
   }
 
-  if (state.status === "error") {
-    return <ControlTowerErrorState message={state.message} onRetry={load} />;
-  }
-
   const data = getRootPayload(state.payload);
   const recentEvents = getRecentEvents(data).slice(0, MAX_RECENT_EVENTS);
 
   return (
-    <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
-      <ControlTowerSection title="WIP Summary">
-        <SummaryList source={data.wip_summary ?? data.wip} />
-      </ControlTowerSection>
+    <div style={{ display: "grid", gap: 12 }}>
+      {state.errorMessage ? <ControlTowerErrorState message={state.errorMessage} onRetry={load} /> : null}
 
-      <ControlTowerSection title="Drying Risk Summary">
-        <SummaryList source={data.drying_risk_summary ?? data.drying_risk} />
-      </ControlTowerSection>
+      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
+        <ControlTowerSection title="WIP Summary">
+          <SummaryList source={data.wip_summary ?? data.wip} />
+        </ControlTowerSection>
 
-      <ControlTowerSection title="Station Load Summary">
-        <SummaryList source={data.station_load_summary ?? data.station_load} />
-      </ControlTowerSection>
+        <ControlTowerSection title="Drying Risk Summary">
+          <SummaryList source={data.drying_risk_summary ?? data.drying_risk} />
+        </ControlTowerSection>
 
-      <ControlTowerSection title="Recent Events">
-        {recentEvents.length === 0 ? (
-          <p style={{ margin: 0, color: "#666" }}>No data yet.</p>
-        ) : (
-          <ol style={{ margin: 0, paddingLeft: 18 }}>
-            {recentEvents.map((event, index) => (
-              <li key={`${String(event.id ?? event.at ?? index)}-${index}`}>
-                <strong>{String(event.type ?? event.name ?? "—")}</strong> — {formatDate(event.at ?? event.time)} —{" "}
-                {String(event.message ?? event.batch_code ?? event.station ?? "—")}
-                {typeof event.count === "number" ? ` (${formatNumber(event.count)})` : ""}
-              </li>
-            ))}
-          </ol>
-        )}
-      </ControlTowerSection>
+        <ControlTowerSection title="Station Load Summary">
+          <SummaryList source={data.station_load_summary ?? data.station_load} />
+        </ControlTowerSection>
+
+        <ControlTowerSection title="Recent Events">
+          {recentEvents.length === 0 ? (
+            <p style={{ margin: 0, color: "#666" }}>No data yet.</p>
+          ) : (
+            <ol style={{ margin: 0, paddingLeft: 18 }}>
+              {recentEvents.map((event, index) => (
+                <li key={`${String(event.id ?? event.at ?? index)}-${index}`}>
+                  <strong>{String(event.type ?? event.name ?? "—")}</strong> — {formatDate(event.at ?? event.time)} —{" "}
+                  {String(event.message ?? event.batch_code ?? event.station ?? "—")}
+                  {typeof event.count === "number" ? ` (${formatNumber(event.count)})` : ""}
+                </li>
+              ))}
+            </ol>
+          )}
+        </ControlTowerSection>
+      </div>
     </div>
   );
 }
