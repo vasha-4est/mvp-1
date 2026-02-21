@@ -1,4 +1,4 @@
-import { type ReactElement } from "react";
+import LoginForm from "./LoginForm";
 
 type LoginPageProps = {
   searchParams?: {
@@ -6,13 +6,13 @@ type LoginPageProps = {
   };
 };
 
-export default function LoginPage({ searchParams }: LoginPageProps): ReactElement {
+export default function LoginPage({ searchParams }: LoginPageProps) {
   const nextPath = searchParams?.next ?? "/";
 
   return (
-    <main>
-      <h1>Login page (MVP)</h1>
-      <p>Continue to: {nextPath}</p>
+    <main data-testid="login-page" style={{ display: "grid", gap: 12, maxWidth: 420 }}>
+      <h1>Login</h1>
+      <LoginForm nextPath={nextPath} />
     </main>
   );
 }
