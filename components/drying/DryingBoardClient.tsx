@@ -101,10 +101,8 @@ export default function DryingBoardClient() {
     return () => window.clearInterval(id);
   }, []);
 
-  const displayItems = useMemo(() => sortDryingItems(items), [items]);
-
   const filteredItems = useMemo(() => {
-    return displayItems.filter((item) => {
+    return items.filter((item) => {
       if (!showNoDate && item.risk === "NO_DATE") {
         return false;
       }
@@ -115,7 +113,7 @@ export default function DryingBoardClient() {
 
       return item.code.toLowerCase().includes(search.trim().toLowerCase());
     });
-  }, [displayItems, search, showNoDate]);
+  }, [items, search, showNoDate]);
 
   return (
     <section style={{ padding: "16px 0" }}>
