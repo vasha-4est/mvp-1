@@ -30,6 +30,7 @@ export type UsersDirectoryUser = {
   username: string;
   password: string;
   password_hash: string;
+  must_change_password?: string;
   is_active: string;
   roles: string;
 };
@@ -75,7 +76,7 @@ export async function readUsersDirectoryFromGas(requestId: string): Promise<{
 
 export async function writeUsersDirectoryHashes(
   requestId: string,
-  updates: Array<{ id: string; password_hash: string }>
+  updates: Array<{ id: string; password_hash: string; must_change_password?: boolean }>
 ): Promise<{ updated: number; mode: "password_hash" | "password" }> {
   const response = await callGas<{ updated?: number; mode?: "password_hash" | "password" }>(
     "control_model.users_directory.update_passwords",

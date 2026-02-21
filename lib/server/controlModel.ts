@@ -14,6 +14,7 @@ export type UserRecord = {
   password_hash: string;
   password?: string;
   is_active: boolean;
+  must_change_password?: boolean;
   created_at: string;
   updated_at: string;
   last_login_at: string | null;
@@ -197,6 +198,7 @@ export async function findUserByUsername(username: string): Promise<UserRecord |
         password_hash: gasUser.password_hash,
         password: gasUser.password,
         is_active: isActive,
+        must_change_password: parseMustChangePassword(gasUser.must_change_password ?? ""),
         created_at: new Date(0).toISOString(),
         updated_at: new Date(0).toISOString(),
         last_login_at: null,
@@ -206,6 +208,36 @@ export async function findUserByUsername(username: string): Promise<UserRecord |
 
   const store = await readStore();
   const user = store.users.find((item) => item.username.trim().toLowerCase() === lookup);
+  return user ?? null;
+}
+
+export async function findUserById(userId: string): Promise<UserRecord | null> {
+  const lookup = userId.trim();
+
+  if (process.env.GAS_WEBAPP_URL) {
+    const requestId = randomUUID();
+    const source = await readUsersDirectoryFromGas(requestId);
+    const gasUser = source.users.find((item) => item.id.trim() === lookup);
+
+    if (gasUser) {
+      return {
+        id: gasUser.id,
+        username: gasUser.username,
+        password_hash: gasUser.password_hash,
+        password: gasUser.password,
+        is_active: parseBool(gasUser.is_active),
+        must_change_password: parseMustChangePassword(gasUser.must_change_password ?? ""),
+        created_at: new Date(0).toISOString(),
+        updated_at: new Date(0).toISOString(),
+        last_login_at: null,
+      };
+    }
+
+    return null;
+  }
+
+  const store = await readStore();
+  const user = store.users.find((item) => item.id === lookup);
   return user ?? null;
 }
 
@@ -253,6 +285,7 @@ export async function createUser(params: {
     username: params.username.trim(),
     password_hash: params.passwordHash,
     is_active: true,
+    must_change_password: false,
     created_at: now,
     updated_at: now,
     last_login_at: null,
@@ -277,6 +310,7 @@ export async function updateUserById(
   updates: {
     passwordHash?: string;
     roles?: AllowedRole[];
+    mustChangePassword?: boolean;
   }
 ): Promise<boolean> {
   const store = await readStore();
@@ -290,6 +324,11 @@ export async function updateUserById(
 
   if (typeof updates.passwordHash === "string" && updates.passwordHash.trim()) {
     user.password_hash = updates.passwordHash;
+  }
+
+
+  if (typeof updates.mustChangePassword === "boolean") {
+    user.must_change_password = updates.mustChangePassword;
   }
 
   if (updates.roles) {
@@ -317,6 +356,15 @@ function parseBool(value: string): boolean {
   }
 
   return !(normalized === "false" || normalized === "0" || normalized === "no");
+}
+
+function parseMustChangePassword(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return normalized === "true" || normalized === "1" || normalized === "yes";
 }
 
 function parseRoles(value: string): AllowedRole[] {
@@ -502,6 +550,7 @@ export async function provisionUsers(): Promise<{
         username,
         password_hash: hashToStore,
         is_active: isActive,
+        must_change_password: false,
         created_at: now,
         updated_at: now,
         last_login_at: null,

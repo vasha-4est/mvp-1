@@ -181,6 +181,7 @@
       username: String(findCellValue_(row, ['username', 'login']) || '').trim(),
       password: String(findCellValue_(row, ['password']) || '').trim(),
       password_hash: String(findCellValue_(row, ['password_hash']) || '').trim(),
+      must_change_password: String(findCellValue_(row, ['must_change_password']) || '').trim(),
       is_active: String(findCellValue_(row, ['is_active']) || '').trim(),
       roles: String(findCellValue_(row, ['roles']) || '').trim(),
       created_at: String(findCellValue_(row, ['created_at']) || '').trim(),
@@ -250,9 +251,14 @@
         continue;
       }
 
+      const update = updates.find((item) => String((item && item.id) || '').trim() === id) || null;
       row[mode === 'password_hash' ? passwordHashIndex : passwordIndex] = byId[id];
       if (mustChangePasswordIndex !== -1) {
-        row[mustChangePasswordIndex] = true;
+        if (update && typeof update.must_change_password === 'boolean') {
+          row[mustChangePasswordIndex] = update.must_change_password;
+        } else {
+          row[mustChangePasswordIndex] = true;
+        }
       }
       if (updatedAtIndex !== -1) {
         row[updatedAtIndex] = nowIso_();

@@ -21,11 +21,16 @@ export default function LoginForm({ nextPath }: { nextPath: string }) {
         body: JSON.stringify({ username, password }),
       });
 
-      const body = (await response.json().catch(() => null)) as { error?: unknown } | null;
+      const body = (await response.json().catch(() => null)) as { error?: unknown; must_change_password?: unknown } | null;
 
       if (!response.ok) {
         const message = typeof body?.error === "string" ? body.error : "Login failed";
         setError(message);
+        return;
+      }
+
+      if (body?.must_change_password === true) {
+        window.location.assign(`/first-login?next=${encodeURIComponent(nextPath || "/")}`);
         return;
       }
 

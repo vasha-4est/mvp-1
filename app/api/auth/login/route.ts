@@ -219,7 +219,7 @@ export async function POST(request: Request) {
       requestId,
       200,
       "OK",
-      { ok: true, role: userRoles },
+      { ok: true, role: userRoles, must_change_password: Boolean(user.must_change_password) },
       includeDebug,
       {
         request: { has_username: hasUsername, has_login: hasLogin, payload_keys: payloadKeys },
