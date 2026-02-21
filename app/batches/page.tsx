@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 
 import { BatchList } from "../../components/batch/BatchList";
+import { requirePageRole } from "@/lib/server/guards";
 import { listBatches } from "../../lib/api/batch";
 
 type SearchParams = {
@@ -26,6 +27,8 @@ export default async function BatchesPage({
 }: {
   searchParams: SearchParams;
 }) {
+  requirePageRole("/batches", ["OWNER", "COO", "VIEWER"]);
+
   const filters = {
     prefix: searchParams.prefix ?? "",
     fromDate: searchParams.fromDate ?? "",

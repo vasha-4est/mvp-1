@@ -1,5 +1,7 @@
 import { headers } from "next/headers";
 
+import { requirePageRole } from "@/lib/server/guards";
+
 type DashboardResponse = {
   ok?: boolean;
   data?: {
@@ -77,6 +79,8 @@ function formatDetails(details: unknown): string {
 }
 
 export default async function OwnerDashboardPage() {
+  requirePageRole("/owner", ["OWNER"]);
+
   const { origin, cookieHeader } = getRequestContext();
   const response = await fetch(`${origin}/api/owner/dashboard`, {
     cache: "no-store",
