@@ -78,6 +78,21 @@ function formatDetails(details: unknown): string {
   }
 }
 
+function ErrorState({ message, requestId }: { message: string; requestId: string }) {
+  return (
+    <main data-testid="owner-dashboard" style={{ display: "grid", gap: 12 }}>
+      <h1>Owner Dashboard</h1>
+      <section>
+        <h2>Dashboard</h2>
+        <div data-testid="owner-dashboard-error" role="alert">
+          {message}
+        </div>
+        <small>request id: {requestId}</small>
+      </section>
+    </main>
+  );
+}
+
 export default async function OwnerDashboardPage({
   searchParams,
 }: {
@@ -101,36 +116,15 @@ export default async function OwnerDashboardPage({
   try {
     payload = (await response.json()) as DashboardResponse;
   } catch {
-    return (
-      <main>
-        <h1>Owner</h1>
-        <h2>Dashboard</h2>
-        <p role="alert">Failed to parse API response.</p>
-        <small>request id: {requestId}</small>
-      </main>
-    );
+    return <ErrorState message="Failed to parse API response." requestId={requestId} />;
   }
 
   if (response.status === 401 || response.status === 403) {
-    return (
-      <main>
-        <h1>Owner</h1>
-        <h2>Dashboard</h2>
-        <p role="alert">Access denied.</p>
-        <small>request id: {requestId}</small>
-      </main>
-    );
+    return <ErrorState message="Access denied." requestId={requestId} />;
   }
 
   if (!response.ok || payload?.ok === false) {
-    return (
-      <main>
-        <h1>Owner</h1>
-        <h2>Dashboard</h2>
-        <p role="alert">Failed to load dashboard.</p>
-        <small>request id: {requestId}</small>
-      </main>
-    );
+    return <ErrorState message="Failed to load dashboard." requestId={requestId} />;
   }
 
   const counts = payload?.data?.counts ?? {};
@@ -146,10 +140,11 @@ export default async function OwnerDashboardPage({
   ];
 
   return (
-    <main style={{ display: "grid", gap: 20 }}>
-      <h1>Owner</h1>
+    <main data-testid="owner-dashboard" style={{ display: "grid", gap: 20 }}>
+      <h1>Owner Dashboard</h1>
       <section style={{ display: "grid", gap: 16 }}>
         <h2>Dashboard</h2>
+        <div data-testid="owner-dashboard-loaded">ok</div>
 
         <div
           style={{
