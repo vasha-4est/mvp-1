@@ -22,13 +22,12 @@ export async function GET(request: Request) {
 
   try {
     const snapshot = await getControlTowerSnapshot({ requestId: auth.requestId });
-
     return json(auth.requestId, 200, snapshot);
   } catch {
-    return json(auth.requestId, 502, {
+    return json(auth.requestId, 500, {
       ok: false,
-      error: "Bad gateway",
-      code: "BAD_GATEWAY",
+      error: "Internal server error",
+      code: "INTERNAL_ERROR",
     });
   }
 }
