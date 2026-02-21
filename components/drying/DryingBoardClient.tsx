@@ -11,7 +11,6 @@ import {
 } from "./risk";
 
 const REFRESH_INTERVAL_MS = 60_000;
-const NOW_TICK_MS = 30_000;
 
 function formatLocalDate(value: Date | null): string {
   if (!value) {
@@ -97,7 +96,7 @@ export default function DryingBoardClient() {
   }, [loadData]);
 
   useEffect(() => {
-    const id = window.setInterval(() => setNow(new Date()), NOW_TICK_MS);
+    const id = window.setInterval(() => setNow(new Date()), 30_000);
     return () => window.clearInterval(id);
   }, []);
 
