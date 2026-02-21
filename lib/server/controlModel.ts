@@ -349,8 +349,14 @@ export async function updateUserById(
   return true;
 }
 
-function parseBool(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
+function parseBool(value: unknown): boolean {
+  // Guard for PR-61 login crash: GAS may return TRUE/FALSE as booleans (or numeric cells),
+  // so parsing must never call .trim() on non-string values.
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  const normalized = value === null || value === undefined ? "" : String(value).trim().toLowerCase();
   if (!normalized) {
     return true;
   }
@@ -358,8 +364,13 @@ function parseBool(value: string): boolean {
   return !(normalized === "false" || normalized === "0" || normalized === "no");
 }
 
-function parseMustChangePassword(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
+function parseMustChangePassword(value: unknown): boolean {
+  // Supports string|boolean|number|null|undefined from users_directory payloads.
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  const normalized = value === null || value === undefined ? "" : String(value).trim().toLowerCase();
   if (!normalized) {
     return false;
   }
