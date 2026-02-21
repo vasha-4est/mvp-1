@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   formatTimeLeft,
   getRiskBadgeStyle,
-  getRiskLabel,
   normalizeDryingPayload,
   type NormalizedDryingItem,
   sortDryingItems,
@@ -63,12 +62,12 @@ export default function DryingBoardClient() {
         return;
       }
 
-      const currentNow = new Date();
-      const normalized = normalizeDryingPayload(payload, currentNow);
+      const fetchedAt = new Date();
+      const normalized = normalizeDryingPayload(payload, fetchedAt);
       setItems(sortDryingItems(normalized));
       setError(null);
-      setNow(currentNow);
-      setLastUpdatedAt(currentNow);
+      setNow(fetchedAt);
+      setLastUpdatedAt(fetchedAt);
     } catch (fetchError) {
       if (isAbortError(fetchError)) {
         return;
@@ -91,25 +90,18 @@ export default function DryingBoardClient() {
       loadData();
     }, REFRESH_INTERVAL_MS);
 
-    const nowIntervalId = window.setInterval(() => {
-      setNow(new Date());
-    }, NOW_TICK_MS);
-
     return () => {
       window.clearInterval(refreshIntervalId);
-      window.clearInterval(nowIntervalId);
       controllerRef.current?.abort();
     };
   }, [loadData]);
 
-  const displayItems = useMemo(() => {
-    const withLiveRisk = items.map((item) => ({
-      ...item,
-      risk: getRiskLabel(item.dryEndAt, now),
-    }));
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), NOW_TICK_MS);
+    return () => window.clearInterval(id);
+  }, []);
 
-    return sortDryingItems(withLiveRisk);
-  }, [items, now]);
+  const displayItems = useMemo(() => sortDryingItems(items), [items]);
 
   const filteredItems = useMemo(() => {
     return displayItems.filter((item) => {
