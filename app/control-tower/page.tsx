@@ -1,13 +1,14 @@
 import { requirePageRole } from "@/lib/server/guards";
 
+import { ControlTowerView } from "@/components/control-tower/ControlTowerView";
+
 export default function ControlTowerPage() {
   requirePageRole("/control-tower", ["OWNER", "COO"]);
 
   return (
-    <main>
+    <main style={{ display: "grid", gap: 16 }}>
       <h1>Control Tower</h1>
-      <p>Coming soon.</p>
-      <p>This is a safe read-only entry point for cross-stage monitoring and alerts.</p>
+      <ControlTowerView />
     </main>
   );
 }
