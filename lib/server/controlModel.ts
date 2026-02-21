@@ -354,19 +354,42 @@ export async function updateUserById(
   return true;
 }
 
+function toNormalizedString(value: unknown): string {
+  if (typeof value === "string") {
+    return value.trim().toLowerCase();
+  }
+
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  return String(value).toLowerCase();
+}
+
 function parseBool(value: unknown): boolean {
-  // Guard for PR-61 login crash: GAS may return TRUE/FALSE as booleans (or numeric cells),
-  // so parsing must never call .trim() on non-string values.
+  // Guard for PR-61 crash paths: users_directory cells may be boolean/number and must not call .trim() on non-strings.
   if (typeof value === "boolean") {
     return value;
   }
 
-  const normalized = value === null || value === undefined ? "" : String(value).trim().toLowerCase();
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+
+  const normalized = toNormalizedString(value);
   if (!normalized) {
     return true;
   }
 
-  return !(normalized === "false" || normalized === "0" || normalized === "no");
+  if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "n") {
+    return false;
+  }
+
+  if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "y") {
+    return true;
+  }
+
+  return true;
 }
 
 function parseMustChangePassword(value: unknown): boolean {
@@ -375,12 +398,24 @@ function parseMustChangePassword(value: unknown): boolean {
     return value;
   }
 
-  const normalized = value === null || value === undefined ? "" : String(value).trim().toLowerCase();
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+
+  const normalized = toNormalizedString(value);
   if (!normalized) {
     return false;
   }
 
-  return normalized === "true" || normalized === "1" || normalized === "yes";
+  if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "y") {
+    return true;
+  }
+
+  if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "n") {
+    return false;
+  }
+
+  return false;
 }
 
 function parseRoles(value: string): AllowedRole[] {

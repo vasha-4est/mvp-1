@@ -30,8 +30,8 @@ export type UsersDirectoryUser = {
   username: string;
   password: string;
   password_hash: string;
-  must_change_password?: string;
-  is_active: string;
+  must_change_password?: unknown;
+  is_active: unknown;
   roles: string;
 };
 
@@ -56,8 +56,8 @@ export async function readUsersDirectoryFromGas(requestId: string): Promise<{
     username: String(row.username ?? "").trim(),
     password: String(row.password ?? ""),
     password_hash: String(row.password_hash ?? ""),
-    must_change_password: row.must_change_password === null || row.must_change_password === undefined ? undefined : String(row.must_change_password),
-    is_active: String(row.is_active ?? ""),
+    must_change_password: row.must_change_password,
+    is_active: row.is_active,
     roles: String(row.roles ?? "").trim(),
   }));
 

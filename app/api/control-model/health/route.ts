@@ -7,17 +7,51 @@ function json(requestId: string, status: number, body: Record<string, unknown>) 
   return NextResponse.json(body, { status, headers: { [REQUEST_ID_HEADER]: requestId } });
 }
 
+function safeStringify(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
 export async function GET(request: Request) {
   const requestId = getOrCreateRequestId(request);
   const debugEnabled = new URL(request.url).searchParams.get("debug") === "1";
+  const includeDebug = debugEnabled && (process.env.VERCEL_ENV || "unknown") !== "production";
 
   try {
     const data = await readUsersDirectoryFromGas(requestId);
 
+    const usersDirectorySampleTypes = includeDebug
+      ? data.users.slice(0, 2).map((row) => ({
+          is_active: {
+            type: typeof row.is_active,
+            value: safeStringify(row.is_active),
+          },
+          must_change_password: {
+            type: typeof row.must_change_password,
+            value: safeStringify(row.must_change_password),
+          },
+        }))
+      : undefined;
+
     return json(requestId, 200, {
       ok: true,
       header_ok: data.debug.header_ok,
-      ...(debugEnabled
+      ...(includeDebug
         ? {
             debug: {
               sheets: {
@@ -32,6 +66,7 @@ export async function GET(request: Request) {
                 sheet_last_col: data.debug.sheet_last_col,
                 scanned_rows_preview: data.debug.scanned_rows_preview,
               },
+              users_directory_sample_types: usersDirectorySampleTypes,
             },
           }
         : {}),
@@ -41,7 +76,7 @@ export async function GET(request: Request) {
       ok: false,
       code: "CONTROL_MODEL_SHEET_INVALID",
       error: error instanceof Error ? error.message : "CONTROL_MODEL_SHEET_INVALID",
-      ...(debugEnabled
+      ...(includeDebug
         ? {
             debug: {
               sheets: {
@@ -53,6 +88,7 @@ export async function GET(request: Request) {
                 missing_required: ["id", "username", "password"],
                 header_ok: false,
               },
+              users_directory_sample_types: [],
             },
           }
         : {}),
