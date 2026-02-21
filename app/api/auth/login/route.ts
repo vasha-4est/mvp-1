@@ -49,12 +49,16 @@ type LoginDebug = {
   };
 };
 
+function isPreviewDebugEnv(vercelEnv: string, nodeEnv: string): boolean {
+  return vercelEnv === "preview" || nodeEnv !== "production";
+}
+
 function getDebugContext(request: Request): { includeDebug: boolean; vercelEnv: string; nodeEnv: string } {
   const url = new URL(request.url);
   const debugFlag = url.searchParams.get("debug") === "1";
   const vercelEnv = process.env.VERCEL_ENV || "unknown";
   const nodeEnv = process.env.NODE_ENV || "unknown";
-  const includeDebug = debugFlag && vercelEnv !== "production";
+  const includeDebug = debugFlag && isPreviewDebugEnv(vercelEnv, nodeEnv);
 
   return { includeDebug, vercelEnv, nodeEnv };
 }
@@ -92,8 +96,10 @@ export async function POST(request: Request) {
   const requestId = getOrCreateRequestId(request);
   const { includeDebug, vercelEnv, nodeEnv } = getDebugContext(request);
   const env = { vercel_env: vercelEnv, node_env: nodeEnv };
+  let stage = "start";
 
   try {
+    stage = "parse_body";
     let body: unknown = null;
     try {
       body = await request.json();
@@ -102,6 +108,8 @@ export async function POST(request: Request) {
     }
 
     const payloadKeys = typeof body === "object" && body !== null && !Array.isArray(body) ? Object.keys(body as Record<string, unknown>) : [];
+
+    stage = "normalize_login";
     const hasLogin = typeof (body as { login?: unknown })?.login === "string";
     const hasUsername = typeof (body as { username?: unknown })?.username === "string";
     const loginValue = hasLogin
@@ -113,7 +121,17 @@ export async function POST(request: Request) {
     const username = loginValue.trim();
     const password = typeof (body as { password?: unknown })?.password === "string" ? (body as { password: string }).password : "";
 
-    const user = username ? await findUserByUsername(username) : null;
+    stage = "load_user";
+    let user = null;
+    if (username) {
+      try {
+        user = await findUserByUsername(username);
+      } catch (error) {
+        stage = "load_user";
+        throw error;
+      }
+    }
+
     if (!user) {
       return withDebug(
         requestId,
@@ -143,6 +161,7 @@ export async function POST(request: Request) {
       );
     }
 
+    stage = "verify_password";
     const stored = typeof user.password === "string" ? user.password : "";
     const checked = await verifyPassword(password, stored);
 
@@ -212,9 +231,11 @@ export async function POST(request: Request) {
       );
     }
 
+    stage = "touch_last_login";
     const now = new Date();
     await touchLastLoginAt(user.id, now.toISOString());
 
+    stage = "set_session";
     const response = withDebug(
       requestId,
       200,
@@ -244,32 +265,55 @@ export async function POST(request: Request) {
       secure: process.env.NODE_ENV === "production",
     });
 
+    stage = "respond_ok";
     return response;
   } catch (error) {
-    if (isStorageError(error)) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "Storage error",
-          code: "STORAGE_ERROR",
-        },
-        {
-          status: 500,
-          headers: { [REQUEST_ID_HEADER]: requestId },
-        }
-      );
-    }
+    const errorName = error instanceof Error ? error.name : "Error";
+    const errorMessage = error instanceof Error ? error.message : "Internal error";
+    const stackHead = error instanceof Error && typeof error.stack === "string" ? error.stack.split("\n").slice(0, 8) : [];
 
-    return NextResponse.json(
-      {
+    if (isStorageError(error)) {
+      const payload: Record<string, unknown> = {
         ok: false,
-        error: "Internal server error",
-        code: "INTERNAL_ERROR",
-      },
-      {
+        error: "Storage error",
+        code: "STORAGE_ERROR",
+      };
+
+      if (includeDebug) {
+        payload.debug = {
+          stage,
+          message: errorMessage,
+          name: errorName,
+          stack_head: stackHead,
+          upstream: process.env.GAS_WEBAPP_URL ? { type: "gas", message: errorMessage } : undefined,
+        };
+      }
+
+      return NextResponse.json(payload, {
         status: 500,
         headers: { [REQUEST_ID_HEADER]: requestId },
-      }
-    );
+      });
+    }
+
+    const payload: Record<string, unknown> = {
+      ok: false,
+      error: "Internal error",
+      code: "INTERNAL_ERROR",
+    };
+
+    if (includeDebug) {
+      payload.debug = {
+        stage,
+        message: errorMessage,
+        name: errorName,
+        stack_head: stackHead,
+        upstream: process.env.GAS_WEBAPP_URL ? { type: "gas", message: errorMessage } : undefined,
+      };
+    }
+
+    return NextResponse.json(payload, {
+      status: 500,
+      headers: { [REQUEST_ID_HEADER]: requestId },
+    });
   }
 }

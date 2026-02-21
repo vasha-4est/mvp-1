@@ -161,8 +161,12 @@ async function writeStore(data: ControlModelData): Promise<void> {
   });
 }
 
-function normalizeRole(role: string): AllowedRole | null {
-  const value = role.trim().toUpperCase();
+function asTrimmed(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
+function normalizeRole(role: unknown): AllowedRole | null {
+  const value = asTrimmed(role).toUpperCase();
   if (ALLOWED_ROLES.includes(value as AllowedRole)) {
     return value as AllowedRole;
   }
@@ -176,19 +180,19 @@ export function normalizeRoleList(roles: unknown): AllowedRole[] | null {
   }
 
   const normalized = roles
-    .map((role) => (typeof role === "string" ? normalizeRole(role) : null))
+    .map((role) => normalizeRole(role))
     .filter((role): role is AllowedRole => role !== null);
 
   return normalized.filter((role, index, arr) => arr.indexOf(role) === index);
 }
 
 export async function findUserByUsername(username: string): Promise<UserRecord | null> {
-  const lookup = username.trim().toLowerCase();
+  const lookup = asTrimmed(username).toLowerCase();
 
   if (process.env.GAS_WEBAPP_URL) {
     const requestId = randomUUID();
     const source = await readUsersDirectoryFromGas(requestId);
-    const gasUser = source.users.find((item) => item.username.trim().toLowerCase() === lookup);
+    const gasUser = source.users.find((item) => asTrimmed(item.username).toLowerCase() === lookup);
 
     if (gasUser) {
       const isActive = parseBool(gasUser.is_active);
@@ -207,17 +211,17 @@ export async function findUserByUsername(username: string): Promise<UserRecord |
   }
 
   const store = await readStore();
-  const user = store.users.find((item) => item.username.trim().toLowerCase() === lookup);
+  const user = store.users.find((item) => asTrimmed(item.username).toLowerCase() === lookup);
   return user ?? null;
 }
 
 export async function findUserById(userId: string): Promise<UserRecord | null> {
-  const lookup = userId.trim();
+  const lookup = asTrimmed(userId);
 
   if (process.env.GAS_WEBAPP_URL) {
     const requestId = randomUUID();
     const source = await readUsersDirectoryFromGas(requestId);
-    const gasUser = source.users.find((item) => item.id.trim() === lookup);
+    const gasUser = source.users.find((item) => asTrimmed(item.id) === lookup);
 
     if (gasUser) {
       return {
@@ -245,7 +249,8 @@ export async function getRolesForUser(userId: string): Promise<AllowedRole[]> {
   if (process.env.GAS_WEBAPP_URL) {
     const requestId = randomUUID();
     const source = await readUsersDirectoryFromGas(requestId);
-    const gasUser = source.users.find((item) => item.id.trim() === userId.trim());
+    const lookup = asTrimmed(userId);
+    const gasUser = source.users.find((item) => asTrimmed(item.id) === lookup);
     if (gasUser) {
       return parseRoles(gasUser.roles);
     }
@@ -494,8 +499,8 @@ export async function provisionUsers(): Promise<{
   }
 
   for (const row of source.users) {
-    const id = row.id.trim();
-    const username = row.username.trim();
+    const id = asTrimmed(row.id);
+    const username = asTrimmed(row.username);
     if (!id || !username) {
       continue;
     }
@@ -507,8 +512,8 @@ export async function provisionUsers(): Promise<{
       continue;
     }
 
-    const passwordValue = row.password.trim();
-    const passwordHashValue = row.password_hash.trim();
+    const passwordValue = asTrimmed(row.password);
+    const passwordHashValue = asTrimmed(row.password_hash);
 
     const passwordKind: "empty" | "scrypt" | "plaintext" = !passwordValue
       ? "empty"
@@ -548,7 +553,7 @@ export async function provisionUsers(): Promise<{
       continue;
     }
 
-    const existingUser = store.users.find((user) => user.id === id || user.username.trim().toLowerCase() === username.toLowerCase());
+    const existingUser = store.users.find((user) => asTrimmed(user.id) === id || asTrimmed(user.username).toLowerCase() === username.toLowerCase());
     if (existingUser) {
       existingUser.id = id;
       existingUser.username = username;

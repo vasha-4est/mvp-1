@@ -35,11 +35,13 @@ export type UsersDirectoryUser = {
   roles: string;
 };
 
+type RawUsersDirectoryUser = Record<string, unknown>;
+
 export async function readUsersDirectoryFromGas(requestId: string): Promise<{
   users: UsersDirectoryUser[];
   debug: UsersDirectoryDebug;
 }> {
-  const response = await callGas<{ users?: UsersDirectoryUser[]; debug?: UsersDirectoryDebug }>(
+  const response = await callGas<{ users?: RawUsersDirectoryUser[]; debug?: UsersDirectoryDebug }>(
     "control_model.users_directory.read",
     {},
     requestId
@@ -49,8 +51,18 @@ export async function readUsersDirectoryFromGas(requestId: string): Promise<{
     throw new Error(errorToMessage(response.error, "Failed to read users_directory"));
   }
 
+  const users = (Array.isArray(response.data.users) ? response.data.users : []).map((row) => ({
+    id: String(row.id ?? "").trim(),
+    username: String(row.username ?? "").trim(),
+    password: String(row.password ?? ""),
+    password_hash: String(row.password_hash ?? ""),
+    must_change_password: row.must_change_password === null || row.must_change_password === undefined ? undefined : String(row.must_change_password),
+    is_active: String(row.is_active ?? ""),
+    roles: String(row.roles ?? "").trim(),
+  }));
+
   return {
-    users: Array.isArray(response.data.users) ? response.data.users : [],
+    users,
     debug: {
       users_directory_found: Boolean(response.data.debug?.users_directory_found),
       available_sheet_names: Array.isArray(response.data.debug?.available_sheet_names)
