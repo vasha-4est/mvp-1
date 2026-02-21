@@ -1,0 +1,48 @@
+.header {
+  border-bottom: 1px solid #e5e7eb;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.links {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.link {
+  color: #1f2937;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.userLabel {
+  color: #374151;
+  font-size: 0.9rem;
+}
+
+.logoutButton {
+  border: 1px solid #d1d5db;
+  background: #ffffff;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.logoutButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
