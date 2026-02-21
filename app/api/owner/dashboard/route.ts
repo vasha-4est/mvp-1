@@ -61,7 +61,7 @@ function normalizeStatus(value: unknown): BatchStatus {
 }
 
 export async function GET(request: Request) {
-  const auth = requireRole(request, "OWNER");
+  const auth = requireRole(request, ["OWNER"]);
 
   if (auth.ok === false) {
     return auth.response;
