@@ -155,6 +155,8 @@ function parseErrorFromMessage_(message) {
     IDEMPOTENCY_KEY_REUSE: true,
     NOT_FOUND: true,
     CONTROL_MODEL_SHEET_INVALID: true,
+    INVALID_PRODUCTS_SKU_SCHEMA: true,
+    INTERNAL_ERROR: true,
   };
 
   if (match && passthroughCodes[match[1]] === true) {
