@@ -10,11 +10,9 @@ export class CatalogFetchError extends Error {}
 
 type RawRecord = Record<string, unknown>;
 
-type ProductsSkuResponse = {
+type CatalogBootstrapResponse = {
   data?: unknown;
-  items?: unknown;
-  rows?: unknown;
-  skus?: unknown;
+  sku?: unknown;
 };
 
 function asRecord(value: unknown): RawRecord | null {
@@ -34,11 +32,25 @@ function asString(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function pickRows(payload: ProductsSkuResponse): unknown[] {
-  if (Array.isArray(payload.data)) return payload.data;
-  if (Array.isArray(payload.items)) return payload.items;
-  if (Array.isArray(payload.rows)) return payload.rows;
-  if (Array.isArray(payload.skus)) return payload.skus;
+function asSkuRows(payload: CatalogBootstrapResponse): unknown[] {
+  if (Array.isArray(payload.sku)) {
+    return payload.sku;
+  }
+
+  const data = asRecord(payload.data);
+  if (!data) {
+    return [];
+  }
+
+  if (Array.isArray(data.sku)) {
+    return data.sku;
+  }
+
+  const nestedData = asRecord(data.data);
+  if (nestedData && Array.isArray(nestedData.sku)) {
+    return nestedData.sku;
+  }
+
   return [];
 }
 
@@ -51,19 +63,13 @@ function normalizeSkus(rows: unknown[]): CatalogSku[] {
       continue;
     }
 
-    const sku = asString(record.sku) ?? asString(record.code) ?? asString(record.id);
+    const sku = asString(record.sku_id) ?? asString(record.sku) ?? asString(record.code) ?? asString(record.id);
     if (!sku) {
       continue;
     }
 
-    const sku_name =
-      asString(record.sku_name) ??
-      asString(record.skuName) ??
-      asString(record.name) ??
-      asString(record.product_name) ??
-      sku;
-
-    const sku_type = asString(record.sku_type) ?? asString(record.skuType) ?? asString(record.type) ?? "";
+    const sku_name = asString(record.sku_name) ?? asString(record.name) ?? sku;
+    const sku_type = asString(record.sku_type) ?? asString(record.type) ?? "";
 
     normalized.push({ sku, sku_name, sku_type });
   }
@@ -72,11 +78,11 @@ function normalizeSkus(rows: unknown[]): CatalogSku[] {
 }
 
 export async function listCatalogSkus(requestId: string): Promise<CatalogSku[]> {
-  const response = await callGas<ProductsSkuResponse>("control_model.products_sku.read", {}, requestId);
+  const response = await callGas<CatalogBootstrapResponse>("catalog.bootstrap", {}, requestId);
 
   if (!response.ok || !response.data) {
-    throw new CatalogFetchError("Failed to read products_sku");
+    throw new CatalogFetchError("Failed to load catalog bootstrap");
   }
 
-  return normalizeSkus(pickRows(response.data));
+  return normalizeSkus(asSkuRows(response.data));
 }
