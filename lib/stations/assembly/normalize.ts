@@ -1,18 +1,22 @@
-export type AssemblyBatch = {
-  code: string;
-  product: string;
-  quantity: number;
-  qc_completed_at: string | null;
+export type AssemblyBomComponent = {
+  sku: string;
+  requiredQty: number;
 };
 
-type RawBatchRecord = Record<string, unknown>;
+export type AssemblySetSku = {
+  sku: string;
+  name: string;
+  components: AssemblyBomComponent[];
+};
 
-function asRecord(value: unknown): RawBatchRecord | null {
+type RawRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): RawRecord | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
 
-  return value as RawBatchRecord;
+  return value as RawRecord;
 }
 
 function asString(value: unknown): string | null {
@@ -39,61 +43,20 @@ function asNumber(value: unknown): number {
   return 0;
 }
 
-function toIsoDate(value: unknown): string | null {
-  const raw = asString(value);
-  if (!raw) {
-    return null;
-  }
-
-  const parsed = Date.parse(raw);
-  if (!Number.isFinite(parsed)) {
-    return null;
-  }
-
-  return new Date(parsed).toISOString();
+function resolveSku(record: RawRecord): string | null {
+  return asString(record.sku) ?? asString(record.code) ?? asString(record.id);
 }
 
-function resolveQcCompletedAt(record: RawBatchRecord): string | null {
-  const candidates = [
-    record.qc_completed_at,
-    record.qcCompletedAt,
-    record.qc_complete_at,
-    record.quality_completed_at,
-    record.qc_done_at,
-  ];
-
-  for (const candidate of candidates) {
-    const iso = toIsoDate(candidate);
-    if (iso) {
-      return iso;
-    }
-  }
-
-  return null;
+function resolveSkuType(record: RawRecord): string | null {
+  return asString(record.sku_type) ?? asString(record.skuType) ?? asString(record.type);
 }
 
-function isAfterQcByFlag(record: RawBatchRecord): boolean {
-  const candidates = [record.after_qc, record.is_after_qc, record.qc_passed, record.in_assembly_queue];
-  return candidates.some((value) => value === true);
+function compareSets(left: AssemblySetSku, right: AssemblySetSku): number {
+  return left.name.localeCompare(right.name) || left.sku.localeCompare(right.sku);
 }
 
-function compareAssemblyBatches(left: AssemblyBatch, right: AssemblyBatch): number {
-  if (left.qc_completed_at && right.qc_completed_at) {
-    const dateDelta = Date.parse(left.qc_completed_at) - Date.parse(right.qc_completed_at);
-    if (dateDelta !== 0) {
-      return dateDelta;
-    }
-  } else if (left.qc_completed_at && !right.qc_completed_at) {
-    return -1;
-  } else if (!left.qc_completed_at && right.qc_completed_at) {
-    return 1;
-  }
-
-  return left.code.localeCompare(right.code);
-}
-
-export function normalizeAssemblyBatches(items: unknown[]): AssemblyBatch[] {
-  const normalized: AssemblyBatch[] = [];
+export function normalizeAssemblySetSkus(items: unknown[]): AssemblySetSku[] {
+  const normalized: AssemblySetSku[] = [];
 
   for (const item of items) {
     const record = asRecord(item);
@@ -101,47 +64,75 @@ export function normalizeAssemblyBatches(items: unknown[]): AssemblyBatch[] {
       continue;
     }
 
-    const code =
-      asString(record.code) ??
-      asString(record.batch_code) ??
-      asString(record.batchCode) ??
-      asString(record.id);
-
-    if (!code) {
+    const skuType = resolveSkuType(record)?.toLowerCase();
+    if (skuType !== "set") {
       continue;
     }
 
-    const qcCompletedAt = resolveQcCompletedAt(record);
-    const isAfterQc = Boolean(qcCompletedAt) || isAfterQcByFlag(record);
-    if (!isAfterQc) {
+    const sku = resolveSku(record);
+    if (!sku) {
       continue;
     }
 
-    const product =
-      asString(record.product) ??
+    const name =
+      asString(record.name) ??
+      asString(record.sku_name) ??
+      asString(record.skuName) ??
       asString(record.product_name) ??
       asString(record.productName) ??
-      asString(record.sku) ??
-      "—";
-
-    const quantity = asNumber(record.quantity ?? record.qty ?? record.amount);
+      sku;
 
     normalized.push({
-      code,
-      product,
-      quantity,
-      qc_completed_at: qcCompletedAt,
+      sku,
+      name,
+      components: [],
     });
   }
 
-  return normalized.sort(compareAssemblyBatches);
+  return normalized.sort(compareSets);
 }
 
-export function filterAssemblyBatchesByCode(items: AssemblyBatch[], query: string): AssemblyBatch[] {
+export function normalizeAssemblyBomComponents(items: unknown[]): AssemblyBomComponent[] {
+  const normalized: AssemblyBomComponent[] = [];
+
+  for (const item of items) {
+    const record = asRecord(item);
+    if (!record) {
+      continue;
+    }
+
+    const sku =
+      asString(record.component_sku) ??
+      asString(record.componentSku) ??
+      asString(record.sku) ??
+      asString(record.code) ??
+      asString(record.id);
+
+    if (!sku) {
+      continue;
+    }
+
+    const requiredQty = asNumber(
+      record.required_qty ?? record.requiredQty ?? record.qty_per_set ?? record.qtyPerSet ?? record.quantity ?? record.qty
+    );
+
+    normalized.push({ sku, requiredQty });
+  }
+
+  return normalized.sort((left, right) => left.sku.localeCompare(right.sku));
+}
+
+export function filterAssemblySetSkus(items: AssemblySetSku[], query: string): AssemblySetSku[] {
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) {
     return items;
   }
 
-  return items.filter((item) => item.code.toLowerCase().includes(normalizedQuery));
+  return items.filter((item) => {
+    if (item.sku.toLowerCase().includes(normalizedQuery) || item.name.toLowerCase().includes(normalizedQuery)) {
+      return true;
+    }
+
+    return item.components.some((component) => component.sku.toLowerCase().includes(normalizedQuery));
+  });
 }

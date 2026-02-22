@@ -3,12 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { AssemblyTable } from "@/components/stations/assembly/AssemblyTable";
-import { filterAssemblyBatchesByCode, type AssemblyBatch } from "@/lib/stations/assembly/normalize";
+import { filterAssemblySetSkus, type AssemblySetSku } from "@/lib/stations/assembly/normalize";
 
 type LoadState =
   | { status: "loading" }
   | { status: "error" }
-  | { status: "ready"; rows: AssemblyBatch[] };
+  | { status: "ready"; rows: AssemblySetSku[] };
 
 export function AssemblyStationClient() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
@@ -34,7 +34,7 @@ export function AssemblyStationClient() {
         }
 
         const payload = (await response.json()) as { data?: unknown };
-        const rows = Array.isArray(payload.data) ? (payload.data as AssemblyBatch[]) : [];
+        const rows = Array.isArray(payload.data) ? (payload.data as AssemblySetSku[]) : [];
 
         if (isMounted) {
           setState({ status: "ready", rows });
@@ -58,19 +58,19 @@ export function AssemblyStationClient() {
       return [];
     }
 
-    return filterAssemblyBatchesByCode(state.rows, query);
+    return filterAssemblySetSkus(state.rows, query);
   }, [state, query]);
 
   return (
     <section style={{ display: "grid", gap: 12 }}>
       <label htmlFor="assembly-search" style={{ display: "grid", gap: 6, maxWidth: 320 }}>
-        <span>Search by batch code</span>
+        <span>Search set or component SKU</span>
         <input
           id="assembly-search"
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Enter code"
+          placeholder="Enter set or component SKU"
           style={{ padding: "8px 10px", border: "1px solid #ccc", borderRadius: 6 }}
         />
       </label>
