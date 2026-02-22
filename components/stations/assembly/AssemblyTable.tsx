@@ -14,10 +14,6 @@ function formatDate(value: string | null): string {
 }
 
 export function AssemblyTable({ rows }: { rows: AssemblyBatch[] }) {
-  if (rows.length === 0) {
-    return <p style={{ margin: 0, color: "#666" }}>No batches found.</p>;
-  }
-
   return (
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -30,14 +26,22 @@ export function AssemblyTable({ rows }: { rows: AssemblyBatch[] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={row.code}>
-              <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>{row.code}</td>
-              <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>{row.product}</td>
-              <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>{row.quantity.toLocaleString()}</td>
-              <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>{formatDate(row.qc_completed_at)}</td>
+          {rows.length === 0 ? (
+            <tr>
+              <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px", color: "#666" }} colSpan={4}>
+                No batches found.
+              </td>
             </tr>
-          ))}
+          ) : (
+            rows.map((row) => (
+              <tr key={row.code}>
+                <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>{row.code}</td>
+                <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>{row.product}</td>
+                <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>{row.quantity.toLocaleString()}</td>
+                <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>{formatDate(row.qc_completed_at)}</td>
+              </tr>
+            ))
+          )}
         </tbody>
       </table>
     </div>
