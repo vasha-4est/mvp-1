@@ -5,8 +5,7 @@ export type AssemblyBomComponent = {
 
 export type AssemblySetSku = {
   sku: string;
-  name: string;
-  components: AssemblyBomComponent[];
+  sku_name: string;
 };
 
 type RawRecord = Record<string, unknown>;
@@ -44,15 +43,11 @@ function asNumber(value: unknown): number {
 }
 
 function resolveSku(record: RawRecord): string | null {
-  return asString(record.sku) ?? asString(record.code) ?? asString(record.id);
+  return asString(record.sku) ?? asString(record.code) ?? asString(record.id) ?? asString(record.set_sku);
 }
 
 function resolveSkuType(record: RawRecord): string | null {
   return asString(record.sku_type) ?? asString(record.skuType) ?? asString(record.type);
-}
-
-function compareSets(left: AssemblySetSku, right: AssemblySetSku): number {
-  return left.name.localeCompare(right.name) || left.sku.localeCompare(right.sku);
 }
 
 export function normalizeAssemblySetSkus(items: unknown[]): AssemblySetSku[] {
@@ -74,22 +69,18 @@ export function normalizeAssemblySetSkus(items: unknown[]): AssemblySetSku[] {
       continue;
     }
 
-    const name =
-      asString(record.name) ??
+    const sku_name =
       asString(record.sku_name) ??
       asString(record.skuName) ??
+      asString(record.name) ??
       asString(record.product_name) ??
       asString(record.productName) ??
       sku;
 
-    normalized.push({
-      sku,
-      name,
-      components: [],
-    });
+    normalized.push({ sku, sku_name });
   }
 
-  return normalized.sort(compareSets);
+  return normalized.sort((left, right) => left.sku_name.localeCompare(right.sku_name) || left.sku.localeCompare(right.sku));
 }
 
 export function normalizeAssemblyBomComponents(items: unknown[]): AssemblyBomComponent[] {
@@ -112,11 +103,12 @@ export function normalizeAssemblyBomComponents(items: unknown[]): AssemblyBomCom
       continue;
     }
 
-    const requiredQty = asNumber(
-      record.required_qty ?? record.requiredQty ?? record.qty_per_set ?? record.qtyPerSet ?? record.quantity ?? record.qty
-    );
-
-    normalized.push({ sku, requiredQty });
+    normalized.push({
+      sku,
+      requiredQty: asNumber(
+        record.required_qty ?? record.requiredQty ?? record.qty_per_set ?? record.qtyPerSet ?? record.quantity ?? record.qty
+      ),
+    });
   }
 
   return normalized.sort((left, right) => left.sku.localeCompare(right.sku));
@@ -128,11 +120,7 @@ export function filterAssemblySetSkus(items: AssemblySetSku[], query: string): A
     return items;
   }
 
-  return items.filter((item) => {
-    if (item.sku.toLowerCase().includes(normalizedQuery) || item.name.toLowerCase().includes(normalizedQuery)) {
-      return true;
-    }
-
-    return item.components.some((component) => component.sku.toLowerCase().includes(normalizedQuery));
-  });
+  return items.filter(
+    (item) => item.sku.toLowerCase().includes(normalizedQuery) || item.sku_name.toLowerCase().includes(normalizedQuery)
+  );
 }

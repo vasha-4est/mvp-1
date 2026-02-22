@@ -1,23 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { callGas } from "@/lib/integrations/gasClient";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { requireRole } from "@/lib/server/guards";
-import {
-  filterAssemblySetSkus,
-  normalizeAssemblyBomComponents,
-  normalizeAssemblySetSkus,
-  type AssemblyBomComponent,
-  type AssemblySetSku,
-} from "@/lib/stations/assembly/normalize";
+import { normalizeAssemblySetSkus } from "@/lib/stations/assembly/normalize";
 
-type SkuListResponse = {
-  items?: unknown;
-};
-
-type BomResponse = {
-  items?: unknown;
-  components?: unknown;
+type CatalogSkuResponse = {
+  data?: unknown;
 };
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
@@ -29,31 +17,6 @@ function json(requestId: string, status: number, body: Record<string, unknown>) 
   });
 }
 
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-async function resolveBomForSet(sku: string, requestId: string): Promise<AssemblyBomComponent[]> {
-  const candidates = ["bom_get", "bom_fetch", "bom_resolve"];
-
-  for (const action of candidates) {
-    const response = await callGas<BomResponse>(action, { sku }, requestId);
-    if (!response.ok || !response.data) {
-      continue;
-    }
-
-    const root = response.data;
-    const items = asArray(root.components).length > 0 ? asArray(root.components) : asArray(root.items);
-    const normalized = normalizeAssemblyBomComponents(items);
-
-    if (normalized.length > 0 || asArray(root.components).length > 0 || asArray(root.items).length > 0) {
-      return normalized;
-    }
-  }
-
-  return [];
-}
-
 export async function GET(request: Request) {
   const auth = requireRole(request, ["OWNER", "COO"]);
 
@@ -62,33 +25,30 @@ export async function GET(request: Request) {
   }
 
   try {
-    const { searchParams } = new URL(request.url);
-    const q = searchParams.get("q") ?? "";
+    const catalogUrl = new URL("/api/catalog/skus", request.url);
+    const catalogResponse = await fetch(catalogUrl, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        [REQUEST_ID_HEADER]: auth.requestId,
+        cookie: request.headers.get("cookie") ?? "",
+      },
+    });
 
-    const response = await callGas<SkuListResponse>("sku_list", {}, auth.requestId);
-    if (!response.ok || !response.data) {
+    if (!catalogResponse.ok) {
       return json(auth.requestId, 502, {
         ok: false,
-        error: "Failed to load assembly SKU data",
+        error: "Failed to load catalog SKUs",
+        code: "CATALOG_FETCH_FAILED",
       });
     }
 
-    const root = response.data;
-    const rawItems = Array.isArray(root.items) ? root.items : Array.isArray(root) ? root : [];
-    const setSkus = normalizeAssemblySetSkus(rawItems);
-
-    const withBom: AssemblySetSku[] = await Promise.all(
-      setSkus.map(async (setSku) => ({
-        ...setSku,
-        components: await resolveBomForSet(setSku.sku, auth.requestId),
-      }))
-    );
-
-    const filtered = filterAssemblySetSkus(withBom, q);
+    const payload = (await catalogResponse.json()) as CatalogSkuResponse;
+    const rows = Array.isArray(payload.data) ? payload.data : [];
 
     return json(auth.requestId, 200, {
       ok: true,
-      data: filtered,
+      data: normalizeAssemblySetSkus(rows),
     });
   } catch {
     return json(auth.requestId, 500, {
