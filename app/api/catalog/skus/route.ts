@@ -1,3 +1,4 @@
+// Catalog API route is placed under app/ because this repository does not use src/app router root.
 import { NextResponse } from "next/server";
 
 import { statusForErrorCode } from "@/lib/api/gasError";
