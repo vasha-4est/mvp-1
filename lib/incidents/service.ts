@@ -118,7 +118,6 @@ export async function reportIncident(input: {
   severity: IncidentSeverity;
   message: string;
   meta: Record<string, unknown>;
-  createdBy: string;
 }): Promise<ReportIncidentSuccess | ServiceError> {
   const reportResponse = await callGas<{ incident_id?: unknown }>(
     "incidents.report",
@@ -127,7 +126,6 @@ export async function reportIncident(input: {
       severity: input.severity,
       message: input.message,
       meta: input.meta,
-      created_by: input.createdBy,
     },
     input.requestId
   );
@@ -145,18 +143,6 @@ export async function reportIncident(input: {
     };
   }
 
-  await callGas<unknown>(
-    "events_log.append",
-    {
-      event_name: "incident_reported",
-      incident_id: incidentId,
-      type: input.type,
-      severity: input.severity,
-      created_by: input.createdBy,
-      at: new Date().toISOString(),
-    },
-    input.requestId
-  ).catch(() => undefined);
 
   return {
     ok: true,

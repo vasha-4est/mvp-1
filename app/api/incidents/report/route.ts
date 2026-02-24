@@ -44,14 +44,12 @@ export async function POST(request: Request) {
   }
 
   try {
-    const createdBy = auth.user.username || auth.user.user_id;
     const result = await reportIncident({
       requestId,
       type: parsed.data.type,
       severity: parsed.data.severity,
       message: parsed.data.message,
       meta: parsed.data.meta,
-      createdBy,
     });
 
     if (result.ok === false) {
