@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { parseErrorPayload } from "@/lib/api/gasError";
-import { callGas } from "@/lib/integrations/gasClient";
+import { getInventoryBalances } from "@/lib/inventory/getInventoryBalances";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { requireRole } from "@/lib/server/guards";
 
@@ -17,12 +16,10 @@ export async function GET(request: Request) {
   const skuId = (url.searchParams.get("sku_id") ?? "").trim();
   const locationId = (url.searchParams.get("location_id") ?? "").trim();
 
-  const gas = await callGas<{ balances?: unknown }>("inventory.balance.get", { sku_id: skuId, location_id: locationId }, auth.requestId);
-  if (!gas.ok || !gas.data) {
-    const parsed = parseErrorPayload((gas as { error?: unknown }).error);
-    if (parsed.code === "FLAG_DISABLED") return json(auth.requestId, 503, { ok: false, code: "FLAG_DISABLED" });
-    return json(auth.requestId, 502, { ok: false, code: parsed.code, error: parsed.error });
+  const result = await getInventoryBalances(auth.requestId, { sku_id: skuId, location_id: locationId });
+  if (result.ok === false) {
+    return json(auth.requestId, 502, { ok: false, code: "BAD_GATEWAY", error: result.error || "Bad gateway" });
   }
 
-  return json(auth.requestId, 200, { ok: true, balances: Array.isArray(gas.data.balances) ? gas.data.balances : [] });
+  return json(auth.requestId, 200, { ok: true, items: result.items });
 }

@@ -2,10 +2,26 @@ const DEFAULT_TIMEOUT_MS = 12_000;
 
 type GasResponse<T> = { ok: boolean; data?: T; error?: string | { code?: string; message?: string } };
 
-export async function callGas<T>(
+type CallGasOptions = {
+  timeoutMs?: number;
+  retries?: number;
+  retryBackoffMs?: number;
+};
+
+function shouldRetryTimeoutLike(error: string): boolean {
+  const normalized = error.toLowerCase();
+  return normalized.includes("timed out");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function callGasOnce<T>(
   action: string,
   payload: unknown,
-  requestId: string
+  requestId: string,
+  timeoutMs: number
 ): Promise<GasResponse<T>> {
   const baseUrl = process.env.GAS_WEBAPP_URL;
   const apiKey = process.env.GAS_API_KEY;
@@ -15,7 +31,7 @@ export async function callGas<T>(
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(baseUrl, {
@@ -95,4 +111,40 @@ export async function callGas<T>(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function callGas<T>(
+  action: string,
+  payload: unknown,
+  requestId: string,
+  options?: CallGasOptions
+): Promise<GasResponse<T>> {
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const retries = options?.retries ?? 0;
+  const retryBackoffMs = options?.retryBackoffMs ?? 0;
+
+  let attempt = 0;
+  while (attempt <= retries) {
+    const result = await callGasOnce<T>(action, payload, requestId, timeoutMs);
+    if (result.ok) return result;
+
+    const errorText =
+      typeof result.error === "string"
+        ? result.error
+        : result.error && typeof result.error === "object" && typeof result.error.message === "string"
+          ? result.error.message
+          : "";
+
+    const retryable = shouldRetryTimeoutLike(errorText);
+    if (!retryable || attempt === retries) {
+      return result;
+    }
+
+    attempt += 1;
+    if (retryBackoffMs > 0) {
+      await sleep(retryBackoffMs * attempt);
+    }
+  }
+
+  return { ok: false, error: "GAS request failed" };
 }
