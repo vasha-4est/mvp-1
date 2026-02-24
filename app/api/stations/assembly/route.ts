@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { callGas } from "@/lib/integrations/gasClient";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { requireRole } from "@/lib/server/guards";
-import { filterAssemblyBatchesByCode, normalizeAssemblyBatches } from "@/lib/stations/assembly/normalize";
+import { normalizeAssemblySetSkus } from "@/lib/stations/assembly/normalize";
 
-type BatchListResponse = {
+type CatalogSkuResponse = {
   items?: unknown;
 };
 
@@ -26,30 +25,30 @@ export async function GET(request: Request) {
   }
 
   try {
-    const { searchParams } = new URL(request.url);
-    const q = searchParams.get("q") ?? "";
+    const catalogUrl = new URL("/api/catalog/skus", request.url);
+    const catalogResponse = await fetch(catalogUrl, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        [REQUEST_ID_HEADER]: auth.requestId,
+        cookie: request.headers.get("cookie") ?? "",
+      },
+    });
 
-    const response = await callGas<BatchListResponse>("batch_list", {}, auth.requestId);
-    if (!response.ok || !response.data) {
+    if (!catalogResponse.ok) {
       return json(auth.requestId, 502, {
         ok: false,
-        error: "Failed to load assembly source data",
+        error: "Failed to load catalog SKUs",
+        code: "CATALOG_FETCH_FAILED",
       });
     }
 
-    const root = response.data;
-    const rawItems = Array.isArray(root.items)
-      ? root.items
-      : Array.isArray(root)
-      ? root
-      : [];
-
-    const normalized = normalizeAssemblyBatches(rawItems);
-    const filtered = filterAssemblyBatchesByCode(normalized, q);
+    const payload = (await catalogResponse.json()) as CatalogSkuResponse;
+    const rows = Array.isArray(payload.items) ? payload.items : [];
 
     return json(auth.requestId, 200, {
       ok: true,
-      data: filtered,
+      data: normalizeAssemblySetSkus(rows),
     });
   } catch {
     return json(auth.requestId, 500, {
