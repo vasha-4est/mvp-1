@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { parseErrorPayload, statusForErrorCode } from "@/lib/api/gasError";
+import { requireWritable } from "@/lib/flags/runtime";
 import { callGas } from "@/lib/integrations/gasClient";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { requireRole } from "@/lib/server/guards";
@@ -77,6 +78,11 @@ export async function handleStationAction(request: Request, station: StationName
 
   if (!ALLOWED_STATIONS.has(station)) {
     return json(auth.requestId, 404, { ok: false, error: "Not found", code: "NOT_FOUND" });
+  }
+
+  const readonlyResponse = await requireWritable(request, auth.requestId);
+  if (readonlyResponse) {
+    return readonlyResponse;
   }
 
   let body: unknown;
