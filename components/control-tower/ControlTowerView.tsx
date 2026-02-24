@@ -8,7 +8,7 @@ import { ControlTowerSection } from "./ControlTowerSection";
 
 type LoadState =
   | { status: "loading" }
-  | { status: "ready"; payload: unknown; errorMessage?: string };
+  | { status: "ready"; payload: unknown; intelligence: unknown; errorMessage?: string };
 
 const MAX_RECENT_EVENTS = 8;
 
@@ -75,6 +75,14 @@ function getRecentEvents(data: Record<string, unknown>): Array<Record<string, un
   return [];
 }
 
+function getTopBottlenecks(source: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(source)) {
+    return [];
+  }
+
+  return source.map((item) => asRecord(item)).filter((item): item is Record<string, unknown> => !!item);
+}
+
 function SummaryList({ source }: { source: unknown }) {
   const record = asRecord(source);
   if (!record || Object.keys(record).length === 0) {
@@ -108,16 +116,24 @@ export function ControlTowerView() {
         setState({
           status: "ready",
           payload: {},
+          intelligence: {},
           errorMessage: `Request failed with status ${response.status}`,
         });
         return;
       }
 
       const payload = (await response.json()) as unknown;
-      setState({ status: "ready", payload });
+      const intelligenceResponse = await fetch("/api/control-tower/intelligence", {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const intelligence = intelligenceResponse.ok ? ((await intelligenceResponse.json()) as unknown) : {};
+
+      setState({ status: "ready", payload, intelligence });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load Control Tower data.";
-      setState({ status: "ready", payload: {}, errorMessage: message });
+      setState({ status: "ready", payload: {}, intelligence: {}, errorMessage: message });
     }
   }, []);
 
@@ -131,6 +147,10 @@ export function ControlTowerView() {
 
   const data = getRootPayload(state.payload);
   const recentEvents = getRecentEvents(data).slice(0, MAX_RECENT_EVENTS);
+  const intelligenceRoot = getRootPayload(state.intelligence);
+  const assemblyIntelligence = asRecord(intelligenceRoot.assembly) ?? {};
+  const availabilityStats = asRecord(assemblyIntelligence.availability_stats) ?? {};
+  const topBottlenecks = getTopBottlenecks(assemblyIntelligence.top_bottlenecks).slice(0, 5);
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -163,6 +183,30 @@ export function ControlTowerView() {
               ))}
             </ol>
           )}
+        </ControlTowerSection>
+
+        <ControlTowerSection title="Assembly Intelligence">
+          <p style={{ margin: 0 }}>
+            <strong>zero_available_sets</strong>: {formatNumber(assemblyIntelligence.zero_available_sets)}
+          </p>
+          <p style={{ margin: "8px 0 0" }}>
+            <strong>availability_stats</strong>: min {formatNumber(availabilityStats.min)}, median{" "}
+            {formatNumber(availabilityStats.median)}, max {formatNumber(availabilityStats.max)}
+          </p>
+          <div style={{ marginTop: 8 }}>
+            <strong>top_bottlenecks</strong>
+            {topBottlenecks.length === 0 ? (
+              <p style={{ margin: "6px 0 0", color: "#666" }}>No data yet.</p>
+            ) : (
+              <ol style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                {topBottlenecks.map((item, index) => (
+                  <li key={`${String(item.component_sku ?? index)}-${index}`}>
+                    {String(item.component_sku ?? "—")}: {formatNumber(item.count)}
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
         </ControlTowerSection>
       </div>
     </div>
