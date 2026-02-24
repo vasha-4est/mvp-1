@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { callGas } from "@/lib/integrations/gasClient";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { requireRole } from "@/lib/server/guards";
-import { filterAssemblyBatchesByCode, normalizeAssemblyBatches } from "@/lib/stations/assembly/normalize";
+import { normalizeAssemblySetSkus } from "@/lib/stations/assembly/normalize";
 
-type BatchListResponse = {
+type CatalogSkuResponse = {
+  data?: unknown;
   items?: unknown;
 };
 
@@ -25,37 +25,49 @@ export async function GET(request: Request) {
     return auth.response;
   }
 
+  const catalogUrl = new URL("/api/catalog/skus", request.url);
+
+  let catalogResponse: Response;
   try {
-    const { searchParams } = new URL(request.url);
-    const q = searchParams.get("q") ?? "";
-
-    const response = await callGas<BatchListResponse>("batch_list", {}, auth.requestId);
-    if (!response.ok || !response.data) {
-      return json(auth.requestId, 502, {
-        ok: false,
-        error: "Failed to load assembly source data",
-      });
-    }
-
-    const root = response.data;
-    const rawItems = Array.isArray(root.items)
-      ? root.items
-      : Array.isArray(root)
-      ? root
-      : [];
-
-    const normalized = normalizeAssemblyBatches(rawItems);
-    const filtered = filterAssemblyBatchesByCode(normalized, q);
-
-    return json(auth.requestId, 200, {
-      ok: true,
-      data: filtered,
+    catalogResponse = await fetch(catalogUrl, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        [REQUEST_ID_HEADER]: auth.requestId,
+        cookie: request.headers.get("cookie") ?? "",
+      },
     });
   } catch {
-    return json(auth.requestId, 500, {
+    return json(auth.requestId, 502, {
       ok: false,
-      error: "Internal server error",
-      code: "INTERNAL_ERROR",
+      error: "Failed to load catalog SKUs",
+      code: "CATALOG_FETCH_FAILED",
     });
   }
+
+  if (!catalogResponse.ok) {
+    return json(auth.requestId, 502, {
+      ok: false,
+      error: "Failed to load catalog SKUs",
+      code: "CATALOG_FETCH_FAILED",
+    });
+  }
+
+  let payload: CatalogSkuResponse;
+  try {
+    payload = (await catalogResponse.json()) as CatalogSkuResponse;
+  } catch {
+    return json(auth.requestId, 502, {
+      ok: false,
+      error: "Failed to parse catalog response",
+      code: "CATALOG_PARSE_FAILED",
+    });
+  }
+
+  const rows = Array.isArray(payload.data) ? payload.data : Array.isArray(payload.items) ? payload.items : [];
+
+  return json(auth.requestId, 200, {
+    ok: true,
+    data: normalizeAssemblySetSkus(rows),
+  });
 }
