@@ -46,10 +46,13 @@ export async function POST(request: Request) {
   try {
     const result = await reportIncident({
       requestId,
-      type: parsed.data.type,
       severity: parsed.data.severity,
-      message: parsed.data.message,
-      meta: parsed.data.meta,
+      zone: parsed.data.zone,
+      entity_type: parsed.data.entity_type,
+      entity_id: parsed.data.entity_id,
+      title: parsed.data.title,
+      description: parsed.data.description,
+      proof_ref: parsed.data.proof_ref,
     });
 
     if (result.ok === false) {

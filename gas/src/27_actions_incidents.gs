@@ -1,25 +1,18 @@
 (function initIncidentsActions_() {
   const INCIDENTS_SHEET = 'incidents';
-  const INCIDENTS_HEADERS = ['incident_id', 'type', 'severity', 'message', 'created_at', 'created_by', 'meta_json'];
-
   const EVENTS_LOG_SHEET = 'events_log';
-
-  const ALLOWED_SEVERITY = {
-    low: true,
-    medium: true,
-    high: true,
-  };
+  const SEVERITY = { low: true, medium: true, high: true };
 
   Actions_.register_('incidents.list', (ctx) => {
     const payload = ctx && ctx.payload ? ctx.payload : {};
     const limit = normalizeLimit_(payload.limit);
 
-    const incidentsSheet = ensureIncidentsSheet_();
+    const incidentsSheet = getIncidentsSheet_();
     const rows = readRowsByHeader_(incidentsSheet);
 
     const items = rows
-      .map((row) => toIncidentItem_(row))
-      .filter((item) => item !== null)
+      .map((row) => normalizeIncidentRow_(row))
+      .filter((row) => row !== null)
       .sort((left, right) => Date.parse(String(right.created_at || '')) - Date.parse(String(left.created_at || '')))
       .slice(0, limit);
 
@@ -29,49 +22,55 @@
   Actions_.register_('incidents.report', (ctx) => {
     const payload = ctx && ctx.payload ? ctx.payload : {};
 
-    const type = String(payload.type || '').trim();
-    const message = String(payload.message || '').trim();
     const severity = String(payload.severity || '').trim().toLowerCase();
+    const zone = String(payload.zone || '').trim();
+    const entityType = String(payload.entity_type || '').trim();
+    const entityId = String(payload.entity_id || '').trim();
+    const title = String(payload.title || '').trim();
+    const description = String(payload.description || '').trim();
+    const proofRef = String(payload.proof_ref || '').trim();
 
-    if (!type) {
-      throw new Error(ERROR.BAD_REQUEST + ': missing type');
-    }
+    if (!SEVERITY[severity]) throw new Error(ERROR.BAD_REQUEST + ': invalid severity');
+    if (!zone) throw new Error(ERROR.BAD_REQUEST + ': missing zone');
+    if (!entityType) throw new Error(ERROR.BAD_REQUEST + ': missing entity_type');
+    if (!entityId) throw new Error(ERROR.BAD_REQUEST + ': missing entity_id');
+    if (!title) throw new Error(ERROR.BAD_REQUEST + ': missing title');
+    if (!description) throw new Error(ERROR.BAD_REQUEST + ': missing description');
 
-    if (!message) {
-      throw new Error(ERROR.BAD_REQUEST + ': missing message');
-    }
-
-    if (!ALLOWED_SEVERITY[severity]) {
-      throw new Error(ERROR.BAD_REQUEST + ': invalid severity');
-    }
-
-    const meta = toMetaObject_(payload.meta);
-    const incidentId = 'inc_' + uuid_();
+    const sh = getIncidentsSheet_();
+    const incidentId = nextIncidentId_(sh);
     const createdAt = nowIso_();
-    const createdBy = actorToCreatedBy_(ctx && ctx.actor ? ctx.actor : null);
 
-    const incidentsSheet = ensureIncidentsSheet_();
-    appendByHeader_(incidentsSheet, {
+    const actor = ctx && ctx.actor ? ctx.actor : {};
+    const reportedByUserId = actorToUserId_(actor);
+    const reportedByRoleId = actorToRoleId_(actor);
+
+    appendByHeader_(sh, {
       incident_id: incidentId,
-      type,
       severity,
-      message,
+      zone,
+      entity_type: entityType,
+      entity_id: entityId,
+      reported_by_user_id: reportedByUserId,
+      reported_by_role_id: reportedByRoleId,
+      status: 'open',
+      title,
+      description,
+      proof_ref: proofRef,
       created_at: createdAt,
-      created_by: createdBy,
-      meta_json: meta ? JSON.stringify(meta) : '',
+      closed_at: '',
+      owner_role_id: '',
     });
 
     appendEventsLogBestEffort_({
       event_name: 'incident_reported',
       incident_id: incidentId,
       at: createdAt,
-      actor: createdBy,
-      payload_json: JSON.stringify({ type, severity }),
+      actor: reportedByUserId,
+      payload_json: JSON.stringify({ severity, zone, entity_type: entityType, entity_id: entityId }),
     });
 
-    return {
-      incident_id: incidentId,
-    };
+    return { incident_id: incidentId };
   });
 
   function normalizeLimit_(raw) {
@@ -80,86 +79,94 @@
     return Math.min(200, Math.floor(parsed));
   }
 
-  function toMetaObject_(raw) {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-      return null;
-    }
-
-    return raw;
-  }
-
-  function toIncidentItem_(row) {
-    const incidentId = String(row.incident_id || '').trim();
-    const type = String(row.type || '').trim();
-    const severity = String(row.severity || '').trim().toLowerCase();
-    const message = String(row.message || '').trim();
-    const createdAt = String(row.created_at || '').trim();
-    const createdBy = String(row.created_by || '').trim();
-
-    if (!incidentId || !type || !message || !createdAt || !createdBy || !ALLOWED_SEVERITY[severity]) {
-      return null;
-    }
-
-    const out = {
-      incident_id: incidentId,
-      type,
-      severity,
-      message,
-      created_at: createdAt,
-      created_by: createdBy,
-    };
-
-    const meta = parseMeta_(row.meta_json);
-    if (meta) {
-      out.meta = meta;
-    }
-
-    return out;
-  }
-
-  function parseMeta_(value) {
-    const raw = String(value || '').trim();
-    if (!raw) return null;
-
-    try {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed;
-      }
-    } catch (_e) {}
-
-    return null;
-  }
-
-  function actorToCreatedBy_(actor) {
-    if (actor && actor.employee_id) return String(actor.employee_id);
-    if (actor && actor.uid) return String(actor.uid);
-    return 'system';
-  }
-
-  function ensureIncidentsSheet_() {
+  function getIncidentsSheet_() {
     const ss = Sys_.ss_(DB.OPS);
     if (!ss) throw new Error('Spreadsheet not configured for ' + DB.OPS);
 
-    let sh = ss.getSheetByName(INCIDENTS_SHEET);
-    if (!sh) {
-      sh = ss.insertSheet(INCIDENTS_SHEET);
-      sh.getRange(1, 1, 1, INCIDENTS_HEADERS.length).setValues([INCIDENTS_HEADERS]);
-      return sh;
-    }
-
-    if (sh.getLastRow() === 0) {
-      sh.getRange(1, 1, 1, INCIDENTS_HEADERS.length).setValues([INCIDENTS_HEADERS]);
-      return sh;
-    }
-
-    const header = sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), INCIDENTS_HEADERS.length)).getValues()[0].map(String);
-    const valid = INCIDENTS_HEADERS.every((name, index) => String(header[index] || '').trim() === name);
-    if (!valid) {
-      throw new Error(ERROR.BAD_REQUEST + ': invalid headers in sheet incidents');
-    }
-
+    const sh = ss.getSheetByName(INCIDENTS_SHEET);
+    if (!sh) throw new Error(ERROR.NOT_FOUND + ': incidents sheet not found');
     return sh;
+  }
+
+  function normalizeIncidentRow_(row) {
+    const incidentId = String(row.incident_id || '').trim();
+    const severity = String(row.severity || '').trim().toLowerCase();
+    const zone = String(row.zone || '').trim();
+    const entityType = String(row.entity_type || '').trim();
+    const entityId = String(row.entity_id || '').trim();
+    const reportedByUserId = String(row.reported_by_user_id || '').trim();
+    const reportedByRoleId = String(row.reported_by_role_id || '').trim();
+    const status = String(row.status || '').trim();
+    const title = String(row.title || '').trim();
+    const description = String(row.description || '').trim();
+    const proofRef = String(row.proof_ref || '').trim();
+    const createdAt = String(row.created_at || '').trim();
+    const closedAt = String(row.closed_at || '').trim();
+    const ownerRoleId = String(row.owner_role_id || '').trim();
+
+    if (
+      !incidentId ||
+      !SEVERITY[severity] ||
+      !zone ||
+      !entityType ||
+      !entityId ||
+      !reportedByUserId ||
+      !reportedByRoleId ||
+      !status ||
+      !title ||
+      !description ||
+      !createdAt
+    ) {
+      return null;
+    }
+
+    return {
+      incident_id: incidentId,
+      severity,
+      zone,
+      entity_type: entityType,
+      entity_id: entityId,
+      reported_by_user_id: reportedByUserId,
+      reported_by_role_id: reportedByRoleId,
+      status,
+      title,
+      description,
+      proof_ref: proofRef,
+      created_at: createdAt,
+      closed_at: closedAt,
+      owner_role_id: ownerRoleId,
+    };
+  }
+
+  function actorToUserId_(actor) {
+    if (actor && actor.employee_id) return String(actor.employee_id);
+    if (actor && actor.id) return String(actor.id);
+    return 'system';
+  }
+
+  function actorToRoleId_(actor) {
+    if (actor && actor.role) return String(actor.role);
+    return 'owner';
+  }
+
+  function nextIncidentId_(sheet) {
+    const rows = readRowsByHeader_(sheet);
+    const yymmdd = Utilities.formatDate(new Date(), 'Etc/UTC', 'yyMMdd');
+    const prefix = 'INC-' + yymmdd + '-';
+
+    let maxSeq = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const id = String(rows[i].incident_id || '').trim();
+      if (id.indexOf(prefix) !== 0) continue;
+      const seqRaw = id.slice(prefix.length);
+      const seq = Number(seqRaw);
+      if (Number.isFinite(seq) && seq > maxSeq) {
+        maxSeq = seq;
+      }
+    }
+
+    const next = String(maxSeq + 1).padStart(3, '0');
+    return prefix + next;
   }
 
   function appendEventsLogBestEffort_(rowObj) {
@@ -172,7 +179,7 @@
 
       appendByHeader_(sh, rowObj);
     } catch (_e) {
-      // best effort, ignore
+      // best effort
     }
   }
 
@@ -185,17 +192,15 @@
   function readRowsByHeader_(sh) {
     const lastRow = sh.getLastRow();
     const lastCol = sh.getLastColumn();
-
     if (lastRow < 2 || lastCol < 1) return [];
 
-    const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map((value) => String(value).trim());
+    const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map((v) => String(v).trim());
     const data = sh.getRange(2, 1, lastRow - 1, lastCol).getValues();
 
     return data.map((cells) => {
       const row = {};
       for (let i = 0; i < header.length; i++) {
-        const key = header[i] || ('col_' + i);
-        row[key] = cells[i];
+        row[header[i] || ('col_' + i)] = cells[i];
       }
       return row;
     });

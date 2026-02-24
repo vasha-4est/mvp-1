@@ -7,11 +7,19 @@ export type IncidentSeverity = (typeof ALLOWED_SEVERITIES)[number];
 
 type GasIncident = {
   incident_id?: unknown;
-  type?: unknown;
   severity?: unknown;
-  message?: unknown;
+  zone?: unknown;
+  entity_type?: unknown;
+  entity_id?: unknown;
+  reported_by_user_id?: unknown;
+  reported_by_role_id?: unknown;
+  status?: unknown;
+  title?: unknown;
+  description?: unknown;
+  proof_ref?: unknown;
   created_at?: unknown;
-  created_by?: unknown;
+  closed_at?: unknown;
+  owner_role_id?: unknown;
 };
 
 type GasIncidentListResult = {
@@ -29,11 +37,19 @@ type ListIncidentsSuccess = {
   ok: true;
   items: Array<{
     incident_id: string;
-    type: string;
     severity: IncidentSeverity;
-    message: string;
+    zone: string;
+    entity_type: string;
+    entity_id: string;
+    reported_by_user_id: string;
+    reported_by_role_id: string;
+    status: string;
+    title: string;
+    description: string;
+    proof_ref: string;
     created_at: string;
-    created_by: string;
+    closed_at: string;
+    owner_role_id: string;
   }>;
 };
 
@@ -46,20 +62,24 @@ function normalizeText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function normalizeSeverity(value: unknown): IncidentSeverity {
+function normalizeSeverity(value: unknown): IncidentSeverity | null {
   const candidate = normalizeText(value).toLowerCase();
   if (ALLOWED_SEVERITIES.includes(candidate as IncidentSeverity)) {
     return candidate as IncidentSeverity;
   }
 
-  return "low";
+  return null;
 }
 
-function normalizeIso(value: unknown): string {
+function normalizeIsoOrEmpty(value: unknown): string {
   const raw = normalizeText(value);
+  if (!raw) {
+    return "";
+  }
+
   const parsed = Date.parse(raw);
-  if (!raw || !Number.isFinite(parsed)) {
-    return new Date(0).toISOString();
+  if (!Number.isFinite(parsed)) {
+    return "";
   }
 
   return new Date(parsed).toISOString();
@@ -90,21 +110,46 @@ export async function listIncidents(requestId: string, limit: number): Promise<L
   const items = rawItems
     .map((item) => {
       const incidentId = normalizeText(item.incident_id);
-      const type = normalizeText(item.type);
-      const message = normalizeText(item.message);
-      const createdBy = normalizeText(item.created_by);
+      const severity = normalizeSeverity(item.severity);
+      const zone = normalizeText(item.zone);
+      const entityType = normalizeText(item.entity_type);
+      const entityId = normalizeText(item.entity_id);
+      const reportedByUserId = normalizeText(item.reported_by_user_id);
+      const reportedByRoleId = normalizeText(item.reported_by_role_id);
+      const status = normalizeText(item.status);
+      const title = normalizeText(item.title);
+      const description = normalizeText(item.description);
 
-      if (!incidentId || !type || !message || !createdBy) {
+      if (
+        !incidentId ||
+        !severity ||
+        !zone ||
+        !entityType ||
+        !entityId ||
+        !reportedByUserId ||
+        !reportedByRoleId ||
+        !status ||
+        !title ||
+        !description
+      ) {
         return null;
       }
 
       return {
         incident_id: incidentId,
-        type,
-        severity: normalizeSeverity(item.severity),
-        message,
-        created_at: normalizeIso(item.created_at),
-        created_by: createdBy,
+        severity,
+        zone,
+        entity_type: entityType,
+        entity_id: entityId,
+        reported_by_user_id: reportedByUserId,
+        reported_by_role_id: reportedByRoleId,
+        status,
+        title,
+        description,
+        proof_ref: normalizeText(item.proof_ref),
+        created_at: normalizeIsoOrEmpty(item.created_at),
+        closed_at: normalizeIsoOrEmpty(item.closed_at),
+        owner_role_id: normalizeText(item.owner_role_id),
       };
     })
     .filter((item): item is NonNullable<typeof item> => item !== null);
@@ -114,18 +159,24 @@ export async function listIncidents(requestId: string, limit: number): Promise<L
 
 export async function reportIncident(input: {
   requestId: string;
-  type: string;
   severity: IncidentSeverity;
-  message: string;
-  meta: Record<string, unknown>;
+  zone: string;
+  entity_type: string;
+  entity_id: string;
+  title: string;
+  description: string;
+  proof_ref: string;
 }): Promise<ReportIncidentSuccess | ServiceError> {
   const reportResponse = await callGas<{ incident_id?: unknown }>(
     "incidents.report",
     {
-      type: input.type,
       severity: input.severity,
-      message: input.message,
-      meta: input.meta,
+      zone: input.zone,
+      entity_type: input.entity_type,
+      entity_id: input.entity_id,
+      title: input.title,
+      description: input.description,
+      proof_ref: input.proof_ref,
     },
     input.requestId
   );
@@ -142,7 +193,6 @@ export async function reportIncident(input: {
       code: "BAD_GATEWAY",
     };
   }
-
 
   return {
     ok: true,
@@ -161,10 +211,13 @@ export function parseReportBody(body: unknown):
   | {
       ok: true;
       data: {
-        type: string;
         severity: IncidentSeverity;
-        message: string;
-        meta: Record<string, unknown>;
+        zone: string;
+        entity_type: string;
+        entity_id: string;
+        title: string;
+        description: string;
+        proof_ref: string;
       };
     }
   | ServiceError {
@@ -177,23 +230,22 @@ export function parseReportBody(body: unknown):
   }
 
   const payload = body as {
-    type?: unknown;
     severity?: unknown;
-    message?: unknown;
-    meta?: unknown;
+    zone?: unknown;
+    entity_type?: unknown;
+    entity_id?: unknown;
+    title?: unknown;
+    description?: unknown;
+    proof_ref?: unknown;
   };
 
-  const type = normalizeText(payload.type);
-  const message = normalizeText(payload.message);
   const severity = normalizeText(payload.severity).toLowerCase();
-
-  if (!type) {
-    return { ok: false, error: "Field 'type' is required", code: "VALIDATION_ERROR" };
-  }
-
-  if (!message) {
-    return { ok: false, error: "Field 'message' is required", code: "VALIDATION_ERROR" };
-  }
+  const zone = normalizeText(payload.zone);
+  const entityType = normalizeText(payload.entity_type);
+  const entityId = normalizeText(payload.entity_id);
+  const title = normalizeText(payload.title);
+  const description = normalizeText(payload.description);
+  const proofRef = normalizeText(payload.proof_ref);
 
   if (!ALLOWED_SEVERITIES.includes(severity as IncidentSeverity)) {
     return {
@@ -203,18 +255,36 @@ export function parseReportBody(body: unknown):
     };
   }
 
-  const meta =
-    typeof payload.meta === "object" && payload.meta !== null && !Array.isArray(payload.meta)
-      ? (payload.meta as Record<string, unknown>)
-      : {};
+  if (!zone) {
+    return { ok: false, error: "Field 'zone' is required", code: "VALIDATION_ERROR" };
+  }
+
+  if (!entityType) {
+    return { ok: false, error: "Field 'entity_type' is required", code: "VALIDATION_ERROR" };
+  }
+
+  if (!entityId) {
+    return { ok: false, error: "Field 'entity_id' is required", code: "VALIDATION_ERROR" };
+  }
+
+  if (!title) {
+    return { ok: false, error: "Field 'title' is required", code: "VALIDATION_ERROR" };
+  }
+
+  if (!description) {
+    return { ok: false, error: "Field 'description' is required", code: "VALIDATION_ERROR" };
+  }
 
   return {
     ok: true,
     data: {
-      type,
       severity: severity as IncidentSeverity,
-      message,
-      meta,
+      zone,
+      entity_type: entityType,
+      entity_id: entityId,
+      title,
+      description,
+      proof_ref: proofRef,
     },
   };
 }
