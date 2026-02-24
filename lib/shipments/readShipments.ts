@@ -1,18 +1,6 @@
 import { callGas } from "@/lib/integrations/gasClient";
 import { parseErrorPayload, type ParsedGasError } from "@/lib/api/gasError";
 
-const OPS_DB = "OPS_DB";
-const SHIPMENTS_SHEET = "shipments";
-const SHIPMENT_LINES_SHEET = "shipment_lines";
-
-const SHEET_READ_ACTIONS = [
-  "ops_db.sheet.read",
-  "ops_db.read_sheet",
-  "control_model.sheet.read",
-  "control_model.table.read",
-  "sheet.read",
-] as const;
-
 type ShipmentListItem = {
   shipment_id: string;
   created_at: string | null;
@@ -47,12 +35,19 @@ type ShipmentsResultError = {
 export type ListShipmentsResult = ShipmentsResultOk<ShipmentListItem[]> | ShipmentsResultError;
 export type GetShipmentResult = ShipmentsResultOk<ShipmentGetResult> | ShipmentsResultError;
 
-type SheetReadResponse = {
-  rows?: unknown;
+type ShipmentsListResponse = {
   items?: unknown;
   data?: {
-    rows?: unknown;
     items?: unknown;
+  };
+};
+
+type ShipmentsGetResponse = {
+  shipment?: unknown;
+  lines?: unknown;
+  data?: {
+    shipment?: unknown;
+    lines?: unknown;
   };
 };
 
@@ -86,19 +81,11 @@ function normalizeRequiredNumber(value: unknown): number {
   return normalizeNullableNumber(value) ?? 0;
 }
 
-function normalizeSheetRows(response: SheetReadResponse): unknown[] {
-  const candidates = [response.rows, response.items, response.data?.rows, response.data?.items];
-
-  for (const candidate of candidates) {
-    if (Array.isArray(candidate)) {
-      return candidate;
-    }
+function parseShipments(rows: unknown): ShipmentListItem[] {
+  if (!Array.isArray(rows)) {
+    return [];
   }
 
-  return [];
-}
-
-function parseShipments(rows: unknown[]): ShipmentListItem[] {
   const items: ShipmentListItem[] = [];
 
   for (const row of rows) {
@@ -126,8 +113,12 @@ function parseShipments(rows: unknown[]): ShipmentListItem[] {
   return items;
 }
 
-function parseShipmentLines(rows: unknown[]): Array<{ shipment_id: string } & ShipmentLineItem> {
-  const items: Array<{ shipment_id: string } & ShipmentLineItem> = [];
+function parseLines(rows: unknown): ShipmentLineItem[] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+
+  const items: ShipmentLineItem[] = [];
 
   for (const row of rows) {
     if (typeof row !== "object" || row === null || Array.isArray(row)) {
@@ -135,16 +126,14 @@ function parseShipmentLines(rows: unknown[]): Array<{ shipment_id: string } & Sh
     }
 
     const record = row as Record<string, unknown>;
-    const shipmentId = normalizeString(record.shipment_id);
     const lineId = normalizeString(record.line_id);
     const skuId = normalizeString(record.sku_id);
 
-    if (!shipmentId || !lineId || !skuId) {
+    if (!lineId || !skuId) {
       continue;
     }
 
     items.push({
-      shipment_id: shipmentId,
       line_id: lineId,
       sku_id: skuId,
       planned_qty: normalizeRequiredNumber(record.planned_qty),
@@ -156,71 +145,52 @@ function parseShipmentLines(rows: unknown[]): Array<{ shipment_id: string } & Sh
   return items;
 }
 
-function looksLikeUnknownAction(error: ParsedGasError): boolean {
-  const lower = `${error.code} ${error.error}`.toLowerCase();
-  return lower.includes("unknown action") || lower.includes("unsupported action") || error.code === "BAD_GATEWAY";
-}
+function normalizeError(error: unknown): ParsedGasError {
+  const parsed = parseErrorPayload(error);
+  const lower = `${parsed.code} ${parsed.error}`.toLowerCase();
 
-function normalizeSheetError(error: ParsedGasError): ParsedGasError {
-  if (error.code === "SHEET_MISSING") {
-    return error;
+  if (parsed.code === "SHEET_MISSING") {
+    return parsed;
   }
 
-  const lower = `${error.code} ${error.error}`.toLowerCase();
   if (lower.includes("sheet") && lower.includes("missing")) {
-    return { ...error, code: "SHEET_MISSING" };
+    return {
+      ...parsed,
+      code: "SHEET_MISSING",
+    };
   }
 
-  return error;
-}
-
-async function readSheetRows(requestId: string, sheetName: string): Promise<ShipmentsResultOk<unknown[]> | ShipmentsResultError> {
-  let lastError: ParsedGasError = {
-    code: "BAD_GATEWAY",
-    error: "Bad gateway",
-  };
-
-  for (const action of SHEET_READ_ACTIONS) {
-    const response = await callGas<SheetReadResponse>(action, { db: OPS_DB, sheet_name: sheetName }, requestId);
-
-    if (response.ok && response.data) {
-      return {
-        ok: true,
-        data: normalizeSheetRows(response.data),
-      };
-    }
-
-    const parsed = normalizeSheetError(parseErrorPayload((response as { error?: unknown }).error));
-    lastError = parsed;
-
-    if (!looksLikeUnknownAction(parsed)) {
-      break;
-    }
-  }
-
-  return { ok: false, ...lastError };
+  return parsed;
 }
 
 export async function listShipments(requestId: string, limit: number): Promise<ListShipmentsResult> {
-  const shipmentsRows = await readSheetRows(requestId, SHIPMENTS_SHEET);
+  const response = await callGas<ShipmentsListResponse>("shipments.list", { limit }, requestId);
 
-  if (shipmentsRows.ok === false) {
-    return shipmentsRows;
+  if (!response.ok) {
+    return { ok: false, ...normalizeError((response as { error?: unknown }).error) };
   }
 
-  const items = parseShipments(shipmentsRows.data).slice(0, limit);
-  return { ok: true, data: items };
+  const payload = response.data;
+  const rawItems = payload?.items ?? payload?.data?.items;
+  return {
+    ok: true,
+    data: parseShipments(rawItems),
+  };
 }
 
 export async function getShipmentWithLines(requestId: string, shipmentId: string): Promise<GetShipmentResult> {
-  const shipmentsRows = await readSheetRows(requestId, SHIPMENTS_SHEET);
+  const response = await callGas<ShipmentsGetResponse>("shipments.get", { shipment_id: shipmentId }, requestId);
 
-  if (shipmentsRows.ok === false) {
-    return shipmentsRows;
+  if (!response.ok) {
+    return { ok: false, ...normalizeError((response as { error?: unknown }).error) };
   }
 
-  const shipments = parseShipments(shipmentsRows.data);
-  const shipment = shipments.find((item) => item.shipment_id === shipmentId);
+  const payload = response.data;
+  const rawShipment = payload?.shipment ?? payload?.data?.shipment;
+  const rawLines = payload?.lines ?? payload?.data?.lines;
+
+  const shipments = parseShipments(rawShipment ? [rawShipment] : []);
+  const shipment = shipments[0];
 
   if (!shipment) {
     return {
@@ -230,21 +200,11 @@ export async function getShipmentWithLines(requestId: string, shipmentId: string
     };
   }
 
-  const linesRows = await readSheetRows(requestId, SHIPMENT_LINES_SHEET);
-
-  if (linesRows.ok === false) {
-    return linesRows;
-  }
-
-  const lines = parseShipmentLines(linesRows.data)
-    .filter((item) => item.shipment_id === shipmentId)
-    .map(({ shipment_id: _shipmentId, ...line }) => line);
-
   return {
     ok: true,
     data: {
       shipment,
-      lines,
+      lines: parseLines(rawLines),
     },
   };
 }
