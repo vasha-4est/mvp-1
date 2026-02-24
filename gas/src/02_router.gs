@@ -48,8 +48,8 @@ function doPost(e) {
 
     // Idempotency
     if (flags.isOn(FLAG.IDEMPOTENCY_REQUEST_ID)) {
-      const cached = Idemp_.get_(requestId);
-      if (cached) {
+      const cached = Idemp_.get_(requestId, action);
+      if (cached && cached.data !== null && cached.data !== undefined) {
         return finalizeGas_(jsonOk_(requestId, cached.data), {
           startedAtMs,
           requestId,
@@ -154,6 +154,10 @@ function parseErrorFromMessage_(message) {
     ILLEGAL_TRANSITION: true,
     IDEMPOTENCY_KEY_REUSE: true,
     NOT_FOUND: true,
+    FLAG_DISABLED: true,
+    LOCK_CONFLICT: true,
+    INSUFFICIENT_STOCK: true,
+    BAD_REQUEST: true,
     CONTROL_MODEL_SHEET_INVALID: true,
     INVALID_PRODUCTS_SKU_SCHEMA: true,
     INTERNAL_ERROR: true,
