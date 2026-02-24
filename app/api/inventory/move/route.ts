@@ -15,6 +15,8 @@ type Body = {
   proof_ref?: unknown;
 };
 
+type MoveResp = { move_id?: unknown; replayed?: unknown };
+
 function json(requestId: string, status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status, headers: { [REQUEST_ID_HEADER]: requestId } });
 }
@@ -39,10 +41,10 @@ function mapError(requestId: string, raw: unknown) {
 }
 
 export async function POST(request: Request) {
-  const incomingRequestId = request.headers.get(REQUEST_ID_HEADER)?.trim() ?? "";
+  const requestId = request.headers.get(REQUEST_ID_HEADER)?.trim() ?? "";
   const auth = requireRole(request, ["OWNER", "COO"]);
   if (auth.ok === false) return auth.response;
-  if (!incomingRequestId) return json(auth.requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: "x-request-id is required" });
+  if (!requestId) return json(auth.requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: "x-request-id is required" });
 
   const readonlyResponse = await requireWritable(request, auth.requestId);
   if (readonlyResponse) return readonlyResponse;
@@ -65,7 +67,7 @@ export async function POST(request: Request) {
     return json(auth.requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: "Invalid inventory move payload" });
   }
 
-  const gas = await callGas<{ move_id?: unknown }>(
+  const gas = await callGas<MoveResp>(
     "inventory.move.create",
     { sku_id: skuId, from_location_id: fromLocationId, to_location_id: toLocationId, qty, reason, proof_ref: proofRef },
     auth.requestId
@@ -75,6 +77,7 @@ export async function POST(request: Request) {
 
   return json(auth.requestId, 200, {
     ok: true,
+    ...(gas.data.replayed === true ? { replayed: true } : {}),
     move_id: typeof gas.data.move_id === "string" ? gas.data.move_id : "",
     sku_id: skuId,
     from_location_id: fromLocationId,

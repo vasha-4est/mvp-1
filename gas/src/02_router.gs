@@ -49,7 +49,7 @@ function doPost(e) {
     // Idempotency
     if (flags.isOn(FLAG.IDEMPOTENCY_REQUEST_ID)) {
       const cached = Idemp_.get_(requestId, action);
-      if (cached) {
+      if (cached && cached.data !== null && cached.data !== undefined) {
         return finalizeGas_(jsonOk_(requestId, cached.data), {
           startedAtMs,
           requestId,

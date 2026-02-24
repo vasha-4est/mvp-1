@@ -8,6 +8,8 @@ import { requireRole } from "@/lib/server/guards";
 
 type Body = { sku_id?: unknown; location_id?: unknown; qty?: unknown; reason?: unknown; proof_ref?: unknown };
 
+type ReserveResp = { replayed?: unknown };
+
 function json(requestId: string, status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status, headers: { [REQUEST_ID_HEADER]: requestId } });
 }
@@ -29,10 +31,10 @@ function mapError(requestId: string, raw: unknown) {
 }
 
 export async function POST(request: Request) {
-  const headerRid = request.headers.get(REQUEST_ID_HEADER)?.trim() ?? "";
+  const requestId = request.headers.get(REQUEST_ID_HEADER)?.trim() ?? "";
   const auth = requireRole(request, ["OWNER", "COO"]);
   if (auth.ok === false) return auth.response;
-  if (!headerRid) return json(auth.requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: "x-request-id is required" });
+  if (!requestId) return json(auth.requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: "x-request-id is required" });
 
   const readonly = await requireWritable(request, auth.requestId);
   if (readonly) return readonly;
@@ -50,8 +52,8 @@ export async function POST(request: Request) {
     return json(auth.requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: "Invalid reserve payload" });
   }
 
-  const gas = await callGas("inventory.reserve.create", { sku_id: skuId, location_id: locationId, qty, reason, proof_ref: proofRef }, auth.requestId);
+  const gas = await callGas<ReserveResp>("inventory.reserve.create", { sku_id: skuId, location_id: locationId, qty, reason, proof_ref: proofRef }, auth.requestId);
   if (!gas.ok || !gas.data) return mapError(auth.requestId, (gas as { error?: unknown }).error);
 
-  return json(auth.requestId, 200, { ok: true, sku_id: skuId, location_id: locationId, qty });
+  return json(auth.requestId, 200, { ok: true, ...(gas.data.replayed === true ? { replayed: true } : {}), sku_id: skuId, location_id: locationId, qty });
 }
