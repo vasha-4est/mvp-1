@@ -4,54 +4,20 @@ import { parseErrorPayload } from "@/lib/api/gasError";
 import { callGas } from "@/lib/integrations/gasClient";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 
-export type FlagValue = boolean | string | number;
-
-export type GetFlagsOk = {
-  ok: true;
-  flags: Record<string, FlagValue>;
-  updated_at: string;
+type FlagsResponse = {
+  ok?: boolean;
+  flags?: Record<string, unknown>;
+  updated_at?: unknown;
 };
 
-export type GetFlagsError = {
-  ok: false;
-  code: string;
-  error: string;
-};
-
-function normalizeFlagValue(value: unknown): FlagValue | null {
-  if (typeof value === "boolean" || typeof value === "string") {
-    return value;
-  }
-
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-
-  return null;
-}
-
-function isConfigFlagsSheetMissing(error: { code: string; error: string }): boolean {
-  if (error.code === "SHEET_MISSING") {
-    return true;
-  }
-
-  const message = `${error.code}:${error.error}`.toLowerCase();
-  return message.includes("missing sheet") && message.includes("config_flags");
-}
-
-export async function getFlags(requestId: string): Promise<GetFlagsOk | GetFlagsError> {
-  const response = await callGas<{ flags?: unknown; updated_at?: unknown }>("flags.get", {}, requestId);
-
+export async function getFlags(
+  requestId: string
+): Promise<
+  { ok: true; flags: Record<string, boolean>; updated_at: string } | { ok: false; code: string; error: string }
+> {
+  const response = await callGas<FlagsResponse>("flags.get", {}, requestId);
   if (!response.ok || !response.data) {
-    const parsed = parseErrorPayload((response as { error?: unknown }).error);
-    if (isConfigFlagsSheetMissing(parsed)) {
-      return {
-        ok: false,
-        code: "SHEET_MISSING",
-        error: "Required sheet 'config_flags' is missing in OPS_DB",
-      };
-    }
-
+    const parsed = parseErrorPayload(response.error);
     return {
       ok: false,
       code: parsed.code,
@@ -59,61 +25,36 @@ export async function getFlags(requestId: string): Promise<GetFlagsOk | GetFlags
     };
   }
 
-  const rawFlags =
-    typeof response.data.flags === "object" && response.data.flags !== null && !Array.isArray(response.data.flags)
-      ? (response.data.flags as Record<string, unknown>)
-      : {};
+  const source = response.data.flags && typeof response.data.flags === "object" ? response.data.flags : {};
+  const normalized: Record<string, boolean> = {};
 
-  const flags: Record<string, FlagValue> = {};
-  for (const [key, value] of Object.entries(rawFlags)) {
-    const normalized = normalizeFlagValue(value);
-    if (normalized !== null) {
-      flags[key] = normalized;
-    }
+  for (const [key, value] of Object.entries(source)) {
+    normalized[key] = Boolean(value);
   }
 
-  const updatedAt =
-    typeof response.data.updated_at === "string" && response.data.updated_at.trim().length > 0
-      ? response.data.updated_at
-      : new Date().toISOString();
+  const updatedAt = typeof response.data.updated_at === "string" ? response.data.updated_at : new Date().toISOString();
 
-  return { ok: true, flags, updated_at: updatedAt };
-}
-
-export function isFlagEnabled(flags: Record<string, FlagValue>, key: string): boolean {
-  const value = flags[key];
-
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value !== 0;
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
-  }
-
-  return false;
+  return {
+    ok: true,
+    flags: normalized,
+    updated_at: updatedAt,
+  };
 }
 
 export async function requireWritable(request: Request, requestId: string): Promise<NextResponse | null> {
-  const flagsResult = await getFlags(requestId);
-  if (!flagsResult.ok) {
+  // Read-only guard: if SYSTEM_READONLY is ON -> block all mutations.
+  // Fail-open: if flags cannot be loaded, do not block (avoid breaking ops due to flags fetch outage).
+  const flagsRes = await getFlags(requestId);
+  if (!("ok" in flagsRes) || flagsRes.ok !== true) {
     return null;
   }
 
-  if (!isFlagEnabled(flagsResult.flags, "SYSTEM_READONLY")) {
-    return null;
+  if (flagsRes.flags?.SYSTEM_READONLY === true) {
+    return NextResponse.json(
+      { ok: false, error: "SYSTEM_READONLY", code: "READ_ONLY" },
+      { status: 503, headers: { [REQUEST_ID_HEADER]: requestId } }
+    );
   }
 
-  return NextResponse.json(
-    {
-      ok: false,
-      code: "SYSTEM_READONLY",
-      error: "System is read-only",
-    },
-    {
-      status: 503,
-      headers: {
-        [REQUEST_ID_HEADER]: requestId,
-      },
-    }
-  );
+  return null;
 }

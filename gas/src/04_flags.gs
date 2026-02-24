@@ -1,15 +1,25 @@
 /** Feature flags stored in OPS_DB/config_flags */
 
 const Flags_ = (() => {
-  function load_() {
+  function normalizeEnabled_(value) {
+    return value === true || value === 'TRUE' || value === 'true' || value === '1' || value === 1;
+  }
+
+  function buildFlagsMap_() {
     const rows = Db_.readAll_(SHEET.CONFIG_FLAGS);
     const map = {};
-    rows.forEach(r => {
-      const k = String(r.flag_key || '').trim();
-      if (!k) return;
-      const on = String(r.enabled_default || '').toUpperCase() === 'TRUE';
-      map[k] = on;
+
+    rows.forEach((row) => {
+      const key = String(row.flag_key || '').trim();
+      if (!key) return;
+      map[key] = normalizeEnabled_(row.enabled);
     });
+
+    return map;
+  }
+
+  function load_() {
+    const map = buildFlagsMap_();
 
     // Keep Phase A core enabled by default so action routing is not blocked.
     map[FLAG.PHASE_A_CORE] = true;
@@ -25,16 +35,17 @@ const Flags_ = (() => {
 
     updates.forEach(u => {
       const key = String(u.flag_key || '').trim();
-      const val = String(u.enabled_default || '').toUpperCase() === 'TRUE' ? 'TRUE' : 'FALSE';
+      const rawEnabled = Object.prototype.hasOwnProperty.call(u, 'enabled') ? u.enabled : u.enabled_default;
+      const val = normalizeEnabled_(rawEnabled) ? 'TRUE' : 'FALSE';
       if (!key) throw new Error(ERROR.BAD_REQUEST + ': flag_key empty');
       const row = Db_.findBy_(SHEET.CONFIG_FLAGS, 'flag_key', key);
       if (!row) throw new Error(ERROR.NOT_FOUND + ': flag ' + key);
-      Db_.updateByPk_(SHEET.CONFIG_FLAGS, 'flag_key', key, { enabled_default: val }, null);
+      Db_.updateByPk_(SHEET.CONFIG_FLAGS, 'flag_key', key, { enabled: val, enabled_default: val }, null);
     });
 
     Events_.log_(ctx, 'flags_updated', 'system', 'flags', { updates });
     return { updated: updates.length };
   }
 
-  return { load_, set_ };
+  return { load_, set_, buildFlagsMap_ };
 })();

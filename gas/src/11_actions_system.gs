@@ -4,7 +4,14 @@
 
   Actions_.register_('flags.get', (ctx)=>{
     Validate_.requireRole_(ctx.actor, [ROLE.OWNER, ROLE.CEO]);
-    return { flags: ctx.flags.all };
+
+    const flags = Flags_.buildFlagsMap_();
+
+    return {
+      ok: true,
+      flags,
+      updated_at: nowIso_(),
+    };
   });
 
   Actions_.register_('flags.set', (ctx)=>{
