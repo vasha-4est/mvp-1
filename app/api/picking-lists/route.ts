@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { statusForErrorCode } from "@/lib/api/gasError";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { readPickingLists } from "@/lib/picking/readPickingSheets";
 import { requireAnyRole } from "@/lib/server/guards";
@@ -13,10 +14,9 @@ function json(requestId: string, status: number, body: Record<string, unknown>) 
   });
 }
 
-function toStatus(code: string): number {
+function statusForPickingError(code: string): number {
   if (code === "SHEET_MISSING") return 500;
-  if (code === "UNAUTHORIZED") return 401;
-  return 502;
+  return statusForErrorCode(code);
 }
 
 export async function GET(request: Request) {
@@ -28,12 +28,12 @@ export async function GET(request: Request) {
   const requestId = auth.requestId;
   const url = new URL(request.url);
   const rawLimit = url.searchParams.get("limit");
-  const parsed = rawLimit ? Number.parseInt(rawLimit, 10) : 50;
-  const limit = Number.isFinite(parsed) && parsed > 0 ? parsed : 50;
+  const parsedLimit = rawLimit ? Number.parseInt(rawLimit, 10) : 50;
+  const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50;
 
-  const result = await readPickingLists(requestId);
+  const result = await readPickingLists(requestId, limit);
   if (result.ok === false) {
-    return json(requestId, toStatus(result.code), {
+    return json(requestId, statusForPickingError(result.code), {
       ok: false,
       code: result.code,
       error: result.error,
@@ -43,6 +43,6 @@ export async function GET(request: Request) {
 
   return json(requestId, 200, {
     ok: true,
-    items: result.items.slice(0, limit),
+    items: result.items,
   });
 }

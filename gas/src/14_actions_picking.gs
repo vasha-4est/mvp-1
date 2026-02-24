@@ -12,6 +12,39 @@
     return { lines: rows };
   });
 
+  Actions_.register_('picking.lists.list', (ctx)=>{
+    Validate_.requireFlag_(ctx.flags, FLAG.PICKING_CORE);
+
+    const rawLimit = Number(ctx.payload.limit);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.floor(rawLimit) : 50;
+
+    let rows = Db_.readAll_(SHEET.PICKING_LISTS);
+    if (limit > 0) {
+      rows = rows.slice(0, limit);
+    }
+
+    return { items: rows };
+  });
+
+  Actions_.register_('picking.lists.get', (ctx)=>{
+    Validate_.requireFlag_(ctx.flags, FLAG.PICKING_CORE);
+    Validate_.requireFields_(ctx.payload, ['picking_list_id']);
+
+    const pickingListId = String(ctx.payload.picking_list_id || '').trim();
+    const pickingList = Db_.findBy_(SHEET.PICKING_LISTS, 'picking_list_id', pickingListId);
+    if (!pickingList) {
+      throw new Error(ERROR.NOT_FOUND + ': picking_list_id');
+    }
+
+    const lines = Db_.readAll_(SHEET.PICKING_LINES)
+      .filter((row) => String(row.picking_list_id || '') === pickingListId);
+
+    return {
+      picking_list: pickingList,
+      lines,
+    };
+  });
+
   Actions_.register_('picking.line.start', (ctx)=>{
     Validate_.requireFlag_(ctx.flags, FLAG.PICKING_CORE);
     Validate_.requireFields_(ctx.payload, ['picking_line_id']);

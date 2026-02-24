@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
+import { statusForErrorCode } from "@/lib/api/gasError";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
-import { readPickingLines, readPickingLists } from "@/lib/picking/readPickingSheets";
+import { readPickingListById } from "@/lib/picking/readPickingSheets";
 import { requireAnyRole } from "@/lib/server/guards";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
@@ -13,10 +14,9 @@ function json(requestId: string, status: number, body: Record<string, unknown>) 
   });
 }
 
-function toStatus(code: string): number {
+function statusForPickingError(code: string): number {
   if (code === "SHEET_MISSING") return 500;
-  if (code === "UNAUTHORIZED") return 401;
-  return 502;
+  return statusForErrorCode(code);
 }
 
 export async function GET(request: Request, context: { params: { id: string } }) {
@@ -28,39 +28,19 @@ export async function GET(request: Request, context: { params: { id: string } })
   const requestId = auth.requestId;
   const id = context.params.id.trim();
 
-  const [listsResult, linesResult] = await Promise.all([readPickingLists(requestId), readPickingLines(requestId)]);
-
-  if (listsResult.ok === false) {
-    return json(requestId, toStatus(listsResult.code), {
+  const result = await readPickingListById(requestId, id);
+  if (result.ok === false) {
+    return json(requestId, statusForPickingError(result.code), {
       ok: false,
-      code: listsResult.code,
-      error: listsResult.error,
-      ...(listsResult.details ? { details: listsResult.details } : {}),
-    });
-  }
-
-  if (linesResult.ok === false) {
-    return json(requestId, toStatus(linesResult.code), {
-      ok: false,
-      code: linesResult.code,
-      error: linesResult.error,
-      ...(linesResult.details ? { details: linesResult.details } : {}),
-    });
-  }
-
-  const pickingList = listsResult.items.find((item) => item.picking_list_id === id);
-  if (!pickingList) {
-    return json(requestId, 404, {
-      ok: false,
-      code: "NOT_FOUND",
+      code: result.code,
+      error: result.error,
+      ...(result.details ? { details: result.details } : {}),
     });
   }
 
   return json(requestId, 200, {
     ok: true,
-    picking_list: pickingList,
-    lines: linesResult.items
-      .filter((item) => item.picking_list_id === id)
-      .map(({ picking_list_id: _pickingListId, ...line }) => line),
+    picking_list: result.picking_list,
+    lines: result.lines,
   });
 }

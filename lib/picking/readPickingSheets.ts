@@ -4,21 +4,11 @@ import { callGas } from "@/lib/integrations/gasClient";
 type PickingListRow = Record<string, unknown>;
 type PickingLineRow = Record<string, unknown>;
 
-type GasReadResponse = {
-  items?: unknown[];
-  rows?: unknown[];
-};
-
 type ReadError = {
   ok: false;
   error: string;
   code: string;
   details?: Record<string, unknown>;
-};
-
-type ReadOk = {
-  ok: true;
-  rows: Record<string, unknown>[];
 };
 
 function toError(raw: unknown, fallback: string): ReadError {
@@ -29,27 +19,6 @@ function toError(raw: unknown, fallback: string): ReadError {
     code: parsed.code,
     ...(parsed.details ? { details: parsed.details } : {}),
   };
-}
-
-async function readRows(
-  requestId: string,
-  action: string,
-  fallback: string
-): Promise<ReadOk | ReadError> {
-  const response = await callGas<GasReadResponse>(action, {}, requestId);
-  if (!response.ok || !response.data) {
-    return toError(response.error, fallback);
-  }
-
-  const source = Array.isArray(response.data.items)
-    ? response.data.items
-    : Array.isArray(response.data.rows)
-      ? response.data.rows
-      : [];
-
-  const rows = source.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null);
-
-  return { ok: true, rows };
 }
 
 function str(value: unknown): string | null {
@@ -99,9 +68,9 @@ function normalizePickingList(row: PickingListRow): PickingListSummary | null {
 }
 
 function normalizePickingLine(row: PickingLineRow): PickingLine | null {
-  const lineId = str(row.line_id);
+  const lineId = str(row.line_id ?? row.picking_line_id);
   const skuId = str(row.sku_id);
-  const plannedQty = num(row.planned_qty);
+  const plannedQty = num(row.planned_qty ?? row.qty_required);
 
   if (!lineId || !skuId || plannedQty === null) return null;
 
@@ -109,39 +78,76 @@ function normalizePickingLine(row: PickingLineRow): PickingLine | null {
     line_id: lineId,
     sku_id: skuId,
     planned_qty: plannedQty,
-    picked_qty: num(row.picked_qty),
+    picked_qty: num(row.picked_qty ?? row.qty_picked),
     status: str(row.status),
   };
 }
 
-export async function readPickingLists(requestId: string): Promise<{ ok: true; items: PickingListSummary[] } | ReadError> {
-  const read = await readRows(requestId, "picking_lists.read", "Failed to read picking_lists");
-  if (read.ok === false) return read;
+type GasPickingListsListResponse = {
+  items?: unknown[];
+};
+
+export async function readPickingLists(
+  requestId: string,
+  limit: number
+): Promise<{ ok: true; items: PickingListSummary[] } | ReadError> {
+  const response = await callGas<GasPickingListsListResponse>("picking.lists.list", { limit }, requestId);
+
+  if (!response.ok || !response.data) {
+    return toError(response.error, "Failed to read picking_lists");
+  }
+
+  const rows = Array.isArray(response.data.items) ? response.data.items : [];
 
   return {
     ok: true,
-    items: read.rows
+    items: rows
+      .filter((row): row is PickingListRow => typeof row === "object" && row !== null)
       .map((row) => normalizePickingList(row))
       .filter((item): item is PickingListSummary => Boolean(item)),
   };
 }
 
-export async function readPickingLines(requestId: string): Promise<{ ok: true; items: (PickingLine & { picking_list_id: string })[] } | ReadError> {
-  const read = await readRows(requestId, "picking_lines.read", "Failed to read picking_lines");
-  if (read.ok === false) return read;
+type GasPickingListsGetResponse = {
+  picking_list?: unknown;
+  lines?: unknown[];
+};
 
-  const items: (PickingLine & { picking_list_id: string })[] = [];
+export async function readPickingListById(
+  requestId: string,
+  pickingListId: string
+): Promise<{ ok: true; picking_list: PickingListSummary; lines: PickingLine[] } | ReadError> {
+  const response = await callGas<GasPickingListsGetResponse>(
+    "picking.lists.get",
+    { picking_list_id: pickingListId },
+    requestId
+  );
 
-  for (const row of read.rows) {
-    const pickingListId = str(row.picking_list_id);
-    const line = normalizePickingLine(row);
-    if (!pickingListId || !line) continue;
-
-    items.push({
-      ...line,
-      picking_list_id: pickingListId,
-    });
+  if (!response.ok || !response.data) {
+    return toError(response.error, "Failed to read picking list");
   }
 
-  return { ok: true, items };
+  const pickingList =
+    typeof response.data.picking_list === "object" && response.data.picking_list !== null
+      ? normalizePickingList(response.data.picking_list as PickingListRow)
+      : null;
+
+  if (!pickingList) {
+    return {
+      ok: false,
+      code: "NOT_FOUND",
+      error: "Picking list not found",
+    };
+  }
+
+  const linesRaw = Array.isArray(response.data.lines) ? response.data.lines : [];
+
+  return {
+    ok: true,
+    picking_list: pickingList,
+    lines: linesRaw
+      .filter((line): line is PickingLineRow => typeof line === "object" && line !== null)
+      .map((line) => normalizePickingLine(line))
+      .filter((line): line is PickingLine => Boolean(line)),
+  };
 }
