@@ -9,6 +9,7 @@ type GasBatchListItem = {
   qty?: unknown;
   packaging_completed_at?: unknown;
   created_at?: unknown;
+  assigned_to?: unknown;
 };
 
 type GasBatchListResponse = {
@@ -22,6 +23,7 @@ export type LabelingBatchItem = {
   quantity: number;
   packaging_completed_at: string | null;
   created_at: string;
+  assigned_to: string | null;
 };
 
 type ListLabelingBatchesOk = {
@@ -128,6 +130,7 @@ export async function listLabelingBatches(requestId: string): Promise<ListLabeli
       quantity: normalizeQuantity(item.quantity ?? item.qty),
       packaging_completed_at: normalizeNullableString(item.packaging_completed_at),
       created_at: normalizeString(item.created_at),
+      assigned_to: normalizeNullableString(item.assigned_to),
     });
   }
 

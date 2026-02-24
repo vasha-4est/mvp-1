@@ -9,6 +9,7 @@ type GasBatchListItem = {
   product?: unknown;
   quantity?: unknown;
   qty?: unknown;
+  assigned_to?: unknown;
 };
 
 type GasBatchListResponse = {
@@ -20,6 +21,7 @@ export type PackagingQueueItem = {
   product: string;
   quantity: number;
   created_at: string;
+  assigned_to: string | null;
 };
 
 type GetPackagingQueueOk = {
@@ -98,6 +100,7 @@ export async function getPackagingQueue(requestId: string): Promise<GetPackaging
       product: normalizeString(item.product) ?? normalizeString(item.title) ?? "—",
       quantity: normalizeQuantity(item.quantity ?? item.qty),
       created_at: createdAtDate.toISOString(),
+      assigned_to: normalizeString(item.assigned_to),
     });
   }
 
