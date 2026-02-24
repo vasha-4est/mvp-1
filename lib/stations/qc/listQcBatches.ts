@@ -5,6 +5,7 @@ export type QcBatch = {
   product: string;
   quantity: number;
   labeled_at: string;
+  assigned_to: string | null;
 };
 
 type GasBatchListItem = {
@@ -15,6 +16,7 @@ type GasBatchListItem = {
   quantity?: unknown;
   qty?: unknown;
   labeled_at?: unknown;
+  assigned_to?: unknown;
 };
 
 type GasBatchListResponse = {
@@ -149,6 +151,7 @@ export async function listQcBatches(requestId: string): Promise<QcBatch[]> {
         product: asTrimmedString(item.product) ?? asTrimmedString(item.title) ?? "—",
         quantity: asPositiveNumber(item.quantity ?? item.qty),
         labeled_at: derivedLabeledAt,
+        assigned_to: asTrimmedString(item.assigned_to),
       } satisfies QcBatch;
     })
   );
