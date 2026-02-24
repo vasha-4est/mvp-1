@@ -43,7 +43,13 @@ function asNumber(value: unknown): number {
 }
 
 function resolveSku(record: RawRecord): string | null {
-  return asString(record.sku) ?? asString(record.code) ?? asString(record.id) ?? asString(record.set_sku);
+  return (
+    asString(record.sku_id) ??
+    asString(record.sku) ??
+    asString(record.set_sku) ??
+    asString(record.code) ??
+    asString(record.id)
+  );
 }
 
 function resolveSkuType(record: RawRecord): string | null {
