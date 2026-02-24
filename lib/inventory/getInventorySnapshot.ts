@@ -1,6 +1,6 @@
 import { callGas } from "@/lib/integrations/gasClient";
 
-const FINAL_STATUSES = new Set(["closed", "final"]);
+const FINAL_STATUSES = new Set(["closed"]);
 
 type BatchRegistryRow = {
   sku_id?: unknown;
