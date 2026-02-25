@@ -137,15 +137,7 @@
 
     return withInventoryBalanceLock_(ctx, skuId, locationId, () => {
       if (idempExists_(ctx.requestId, action)) {
-        return {
-          ok: true,
-          replayed: true,
-          reservation_id: operationId,
-          operation_id: operationId,
-          sku_id: skuId,
-          location_id: locationId,
-          qty,
-        };
+        return replayReserveResponse_(ctx.requestId, operationId, skuId, locationId, qty);
       }
 
       const updatedAt = nowIso_();
@@ -181,6 +173,7 @@
         reserved_qty: nextReservedQty,
         available_qty: nextAvailableQty,
         version_id: nextVersionId,
+        updated_at: updatedAt,
       };
     });
   });
@@ -203,15 +196,7 @@
 
     return withInventoryBalanceLock_(ctx, skuId, locationId, () => {
       if (idempExists_(ctx.requestId, action)) {
-        return {
-          ok: true,
-          replayed: true,
-          release_id: operationId,
-          operation_id: operationId,
-          sku_id: skuId,
-          location_id: locationId,
-          qty,
-        };
+        return replayReleaseResponse_(ctx.requestId, operationId, skuId, locationId, qty);
       }
 
       const updatedAt = nowIso_();
@@ -247,6 +232,7 @@
         reserved_qty: nextReservedQty,
         available_qty: nextAvailableQty,
         version_id: nextVersionId,
+        updated_at: updatedAt,
       };
     });
   });
@@ -432,6 +418,99 @@
     return prefix + '-' + (clean || 'REQUEST');
   }
 
+  function replayReserveResponse_(requestId, reservationId, skuId, locationId, qty) {
+    const payload = findInventoryEventPayload_(requestId, 'inventory_reserved');
+    if (payload) {
+      return {
+        ok: true,
+        replayed: true,
+        reservation_id: str_(payload.reservation_id || reservationId),
+        operation_id: str_(payload.operation_id || reservationId),
+        sku_id: str_(payload.sku_id || skuId),
+        location_id: str_(payload.location_id || locationId),
+        qty: num_(payload.qty || qty),
+        reserved_qty: num_(payload.reserved_qty),
+        available_qty: num_(payload.available_qty),
+        version_id: String(payload.version_id || ''),
+        updated_at: str_(payload.updated_at) || nowIso_(),
+      };
+    }
+
+    const row = readBalanceRow_(skuId, locationId);
+    return {
+      ok: true,
+      replayed: true,
+      reservation_id: reservationId,
+      operation_id: reservationId,
+      sku_id: skuId,
+      location_id: locationId,
+      qty,
+      reserved_qty: row ? row.reservedQty : null,
+      available_qty: row ? row.availableQty : null,
+      version_id: row ? row.versionId : '',
+      updated_at: row ? row.updatedAt : nowIso_(),
+    };
+  }
+
+  function replayReleaseResponse_(requestId, releaseId, skuId, locationId, qty) {
+    const payload = findInventoryEventPayload_(requestId, 'inventory_released');
+    if (payload) {
+      return {
+        ok: true,
+        replayed: true,
+        release_id: str_(payload.release_id || releaseId),
+        operation_id: str_(payload.operation_id || releaseId),
+        sku_id: str_(payload.sku_id || skuId),
+        location_id: str_(payload.location_id || locationId),
+        qty: num_(payload.qty || qty),
+        reserved_qty: num_(payload.reserved_qty),
+        available_qty: num_(payload.available_qty),
+        version_id: String(payload.version_id || ''),
+        updated_at: str_(payload.updated_at) || nowIso_(),
+      };
+    }
+
+    const row = readBalanceRow_(skuId, locationId);
+    return {
+      ok: true,
+      replayed: true,
+      release_id: releaseId,
+      operation_id: releaseId,
+      sku_id: skuId,
+      location_id: locationId,
+      qty,
+      reserved_qty: row ? row.reservedQty : null,
+      available_qty: row ? row.availableQty : null,
+      version_id: row ? row.versionId : '',
+      updated_at: row ? row.updatedAt : nowIso_(),
+    };
+  }
+
+  function findInventoryEventPayload_(requestId, eventType) {
+    const req = str_(requestId);
+    if (!req) return null;
+
+    const rows = Db_.query_(SHEET.EVENTS, (row) => str_(row.request_id) === req && str_(row.event_type) === eventType);
+    if (rows.length === 0) return null;
+
+    const row = rows[0];
+    const rawPayload = str_(row.payload_json);
+    if (!rawPayload) return null;
+
+    try {
+      const parsed = JSON.parse(rawPayload);
+      if (parsed && typeof parsed === 'object') {
+        return {
+          ...parsed,
+          updated_at: str_(row.created_at),
+        };
+      }
+      return null;
+    } catch (err) {
+      return null;
+    }
+  }
+
   function readBalanceRow_(skuId, locationId) {
     const sheet = Sys_.sheet_(SHEET.INVENTORY);
     const lastRow = sheet.getLastRow();
@@ -452,6 +531,7 @@
           reservedQty: num_(values[i][idx.reserved_qty]),
           availableQty: num_(values[i][idx.available_qty]),
           versionId: str_(values[i][idx.version_id] || '0'),
+          updatedAt: str_(values[i][idx.updated_at]),
         };
       }
     }
