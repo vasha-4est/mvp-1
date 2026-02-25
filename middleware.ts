@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const PROTECTED_PAGE_PREFIXES = ["/owner", "/drying", "/packaging", "/control-tower", "/batches"];
+const PROTECTED_PAGE_PREFIXES = ["/owner", "/drying", "/packaging", "/control-tower", "/batches", "/shipments"];
 const SESSION_COOKIE_NAME = "session";
 
 function fromBase64(input: string): string | null {
@@ -91,5 +91,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/owner/:path*", "/drying/:path*", "/packaging/:path*", "/control-tower/:path*", "/batches/:path*"],
+  matcher: ["/owner/:path*", "/drying/:path*", "/packaging/:path*", "/control-tower/:path*", "/batches/:path*", "/shipments/:path*"],
 };
