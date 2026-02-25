@@ -119,7 +119,7 @@
     });
   });
 
-  Actions_.register_('inventory.reserve.create', (ctx) => {
+  Actions_.register_('inventory.reserve', (ctx) => {
     Validate_.requireFlag_(ctx.flags, FLAG.INVENTORY_CORE);
     const payload = ctx.payload || {};
     const skuId = str_(payload.sku_id);
@@ -132,19 +132,22 @@
     if (!locationId) throw new Error(ERROR.BAD_REQUEST + ': missing location_id');
     if (!Number.isFinite(qty) || qty <= 0) throw new Error(ERROR.BAD_REQUEST + ': qty must be > 0');
 
-    return withLock_(() => {
+    return withInventoryBalanceLock_(ctx, skuId, locationId, () => {
+      const replayReservationId = replayEventEntityId_(ctx.requestId, 'inventory_reserved');
       if (idempExists_(ctx.requestId, 'inventory.reserve')) {
-        return { ok: true, replayed: true, sku_id: skuId, location_id: locationId, qty };
+        return { ok: true, replayed: true, reservation_id: replayReservationId, sku_id: skuId, location_id: locationId, qty };
       }
 
       const updatedAt = nowIso_();
       const row = readBalanceRow_(skuId, locationId);
       if (!row) throw new Error(ERROR.NOT_FOUND + ': SKU_NOT_FOUND');
-      if (row.availableQty < qty) throw new Error(ERROR.INSUFFICIENT_STOCK + ': insufficient available_qty');
+      if (row.availableQty < qty) throw new Error(ERROR.INSUFFICIENT_AVAILABLE + ': insufficient available_qty');
 
       updateBalanceRow_(row, row.onHandQty, row.reservedQty + qty, updatedAt);
 
-      appendEvent_('inventory_reserve', 'inventory_balance', skuId + ':' + locationId, {
+      const reservationId = nextInventoryOpId_(updatedAt, 'RSV');
+      appendEvent_('inventory_reserved', 'inventory_balance', skuId + '::' + locationId, {
+        reservation_id: reservationId,
         sku_id: skuId,
         location_id: locationId,
         qty,
@@ -153,11 +156,11 @@
       }, updatedAt, ctx);
 
       markIdempotent_(ctx.requestId, 'inventory.reserve');
-      return { ok: true, sku_id: skuId, location_id: locationId, qty };
+      return { ok: true, reservation_id: reservationId, sku_id: skuId, location_id: locationId, qty };
     });
   });
 
-  Actions_.register_('inventory.release.create', (ctx) => {
+  Actions_.register_('inventory.release', (ctx) => {
     Validate_.requireFlag_(ctx.flags, FLAG.INVENTORY_CORE);
     const payload = ctx.payload || {};
     const skuId = str_(payload.sku_id);
@@ -170,19 +173,22 @@
     if (!locationId) throw new Error(ERROR.BAD_REQUEST + ': missing location_id');
     if (!Number.isFinite(qty) || qty <= 0) throw new Error(ERROR.BAD_REQUEST + ': qty must be > 0');
 
-    return withLock_(() => {
+    return withInventoryBalanceLock_(ctx, skuId, locationId, () => {
+      const replayReleaseId = replayEventEntityId_(ctx.requestId, 'inventory_released');
       if (idempExists_(ctx.requestId, 'inventory.release')) {
-        return { ok: true, replayed: true, sku_id: skuId, location_id: locationId, qty };
+        return { ok: true, replayed: true, release_id: replayReleaseId, sku_id: skuId, location_id: locationId, qty };
       }
 
       const updatedAt = nowIso_();
       const row = readBalanceRow_(skuId, locationId);
       if (!row) throw new Error(ERROR.NOT_FOUND + ': SKU_NOT_FOUND');
-      if (row.reservedQty < qty) throw new Error(ERROR.INSUFFICIENT_STOCK + ': insufficient reserved_qty');
+      if (row.reservedQty < qty) throw new Error(ERROR.INSUFFICIENT_RESERVED + ': insufficient reserved_qty');
 
       updateBalanceRow_(row, row.onHandQty, row.reservedQty - qty, updatedAt);
 
-      appendEvent_('inventory_release', 'inventory_balance', skuId + ':' + locationId, {
+      const releaseId = nextInventoryOpId_(updatedAt, 'REL');
+      appendEvent_('inventory_released', 'inventory_balance', skuId + '::' + locationId, {
+        release_id: releaseId,
         sku_id: skuId,
         location_id: locationId,
         qty,
@@ -191,7 +197,7 @@
       }, updatedAt, ctx);
 
       markIdempotent_(ctx.requestId, 'inventory.release');
-      return { ok: true, sku_id: skuId, location_id: locationId, qty };
+      return { ok: true, release_id: releaseId, sku_id: skuId, location_id: locationId, qty };
     });
   });
 
@@ -269,16 +275,81 @@
     }
   }
 
-  function withLock_(fn) {
-    const lock = LockService.getScriptLock();
-    if (!lock.tryLock(50)) {
-      throw new Error(ERROR.LOCK_CONFLICT + ': Inventory entity is locked');
+  function withInventoryBalanceLock_(ctx, skuId, locationId, fn) {
+    return withEntitySheetLock_(ctx, 'inventory_balance', skuId + '::' + locationId, fn);
+  }
+
+  function withEntitySheetLock_(ctx, entityType, entityId, fn) {
+    const lockKey = entityType + ':' + entityId;
+    const now = new Date();
+    const acquiredAt = now.toISOString();
+    const expiresAt = new Date(now.getTime() + ENTITY_LOCK_TTL_SEC * 1000).toISOString();
+    const lockSheet = Sys_.sheet_(SHEET.LOCKS);
+    const lockHeader = lockSheet.getRange(1, 1, 1, lockSheet.getLastColumn()).getValues()[0].map(String);
+    const lockIdx = index_(lockHeader, [
+      'lock_key',
+      'entity_type',
+      'entity_id',
+      'held_by_user_id',
+      'held_by_role_id',
+      'acquired_at',
+      'expires_at',
+      'status',
+    ]);
+
+    const lastRow = lockSheet.getLastRow();
+    if (lastRow >= 2) {
+      const lockRows = lockSheet.getRange(2, 1, lastRow - 1, lockHeader.length).getValues();
+      const toDelete = [];
+
+      for (let i = 0; i < lockRows.length; i++) {
+        if (str_(lockRows[i][lockIdx.lock_key]) !== lockKey) continue;
+
+        const expiresAtValue = new Date(str_(lockRows[i][lockIdx.expires_at]));
+        const isExpired = Number.isFinite(expiresAtValue.getTime()) && expiresAtValue.getTime() < now.getTime();
+        if (isExpired) {
+          toDelete.push(i + 2);
+          continue;
+        }
+
+        const status = str_(lockRows[i][lockIdx.status]);
+        if (status === 'active') {
+          throw new Error(ERROR.LOCK_CONFLICT + ': Inventory entity is locked');
+        }
+      }
+
+      for (let j = toDelete.length - 1; j >= 0; j--) {
+        lockSheet.deleteRow(toDelete[j]);
+      }
     }
+
+    lockSheet.appendRow(lockHeader.map((columnName) => {
+      if (columnName === 'lock_key') return lockKey;
+      if (columnName === 'entity_type') return entityType;
+      if (columnName === 'entity_id') return entityId;
+      if (columnName === 'held_by_user_id') return actorUserId_(ctx) || 'system';
+      if (columnName === 'held_by_role_id') return actorRoleId_(ctx);
+      if (columnName === 'acquired_at') return acquiredAt;
+      if (columnName === 'expires_at') return expiresAt;
+      if (columnName === 'status') return 'active';
+      return '';
+    }));
 
     try {
       return fn();
     } finally {
-      lock.releaseLock();
+      const currentLastRow = lockSheet.getLastRow();
+      if (currentLastRow < 2) return;
+
+      const rows = lockSheet.getRange(2, 1, currentLastRow - 1, lockHeader.length).getValues();
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const rowLockKey = str_(rows[i][lockIdx.lock_key]);
+        const rowAcquiredAt = str_(rows[i][lockIdx.acquired_at]);
+        if (rowLockKey === lockKey && rowAcquiredAt === acquiredAt) {
+          lockSheet.deleteRow(i + 2);
+          break;
+        }
+      }
     }
   }
 
@@ -299,10 +370,18 @@
   }
 
   function replayMoveId_(requestId) {
+    return replayEventEntityId_(requestId, 'inventory_move');
+  }
+
+  function replayEventEntityId_(requestId, eventType) {
     const req = str_(requestId);
     if (!req) return '';
-    const rows = Db_.query_(SHEET.EVENTS, (row) => str_(row.request_id) === req && str_(row.event_type) === 'inventory_move');
+    const rows = Db_.query_(SHEET.EVENTS, (row) => str_(row.request_id) === req && str_(row.event_type) === eventType);
     if (rows.length === 0) return '';
+    const payload = jsonObj_(rows[0].payload_json);
+    if (eventType === 'inventory_move') return str_(rows[0].entity_id);
+    if (eventType === 'inventory_reserved') return str_(payload.reservation_id);
+    if (eventType === 'inventory_released') return str_(payload.release_id);
     return str_(rows[0].entity_id);
   }
 
@@ -395,6 +474,30 @@
     return prefix + String(maxSeq + 1).padStart(3, '0');
   }
 
+  function nextInventoryOpId_(isoTs, codePrefix) {
+    const sheet = Sys_.sheet_(SHEET.EVENTS);
+    const lastRow = sheet.getLastRow();
+    const header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
+    const idx = index_(header, ['payload_json']);
+
+    const dateKey = Utilities.formatDate(new Date(isoTs), SERVICE_TIMEZONE, 'yyMMdd');
+    const prefix = codePrefix + '-' + dateKey + '-';
+    let maxSeq = 0;
+
+    if (lastRow >= 2) {
+      const values = sheet.getRange(2, 1, lastRow - 1, header.length).getValues();
+      for (let i = 0; i < values.length; i++) {
+        const payload = jsonObj_(values[i][idx.payload_json]);
+        const eventId = codePrefix === 'RSV' ? str_(payload.reservation_id) : str_(payload.release_id);
+        if (eventId.indexOf(prefix) !== 0) continue;
+        const seq = Number(eventId.slice(prefix.length));
+        if (Number.isFinite(seq) && seq > maxSeq) maxSeq = seq;
+      }
+    }
+
+    return prefix + String(maxSeq + 1).padStart(3, '0');
+  }
+
   function actorUserId_(ctx) {
     return ctx && ctx.actor && ctx.actor.employee_id ? str_(ctx.actor.employee_id) : '';
   }
@@ -416,6 +519,16 @@
     }
 
     return out;
+  }
+
+  function jsonObj_(value) {
+    try {
+      const parsed = JSON.parse(str_(value) || '{}');
+      if (parsed && typeof parsed === 'object') return parsed;
+      return {};
+    } catch (err) {
+      return {};
+    }
   }
 
   function str_(value) {

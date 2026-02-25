@@ -157,6 +157,8 @@ function parseErrorFromMessage_(message) {
     FLAG_DISABLED: true,
     LOCK_CONFLICT: true,
     INSUFFICIENT_STOCK: true,
+    INSUFFICIENT_AVAILABLE: true,
+    INSUFFICIENT_RESERVED: true,
     BAD_REQUEST: true,
     CONTROL_MODEL_SHEET_INVALID: true,
     INVALID_PRODUCTS_SKU_SCHEMA: true,

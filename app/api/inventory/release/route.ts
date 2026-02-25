@@ -8,7 +8,7 @@ import { requireRole } from "@/lib/server/guards";
 
 type Body = { sku_id?: unknown; location_id?: unknown; qty?: unknown; reason?: unknown; proof_ref?: unknown };
 
-type ReleaseResp = { replayed?: unknown };
+type ReleaseResp = { release_id?: unknown; replayed?: unknown };
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status, headers: { [REQUEST_ID_HEADER]: requestId } });
@@ -22,9 +22,9 @@ function qtyNum(v: unknown): number | null {
 
 function mapError(requestId: string, raw: unknown) {
   const parsed = parseErrorPayload(raw);
-  if (parsed.code === "FLAG_DISABLED") return json(requestId, 503, { ok: false, code: "FLAG_DISABLED" });
+  if (parsed.code === "FLAG_DISABLED") return json(requestId, 400, { ok: false, code: "FLAG_DISABLED" });
   if (parsed.code === "LOCK_CONFLICT") return json(requestId, 409, { ok: false, code: "LOCK_CONFLICT" });
-  if (parsed.code === "INSUFFICIENT_STOCK") return json(requestId, 409, { ok: false, code: "INSUFFICIENT_STOCK" });
+  if (parsed.code === "INSUFFICIENT_RESERVED") return json(requestId, 409, { ok: false, code: "INSUFFICIENT_RESERVED" });
   if (parsed.code === "NOT_FOUND") return json(requestId, 404, { ok: false, code: "SKU_NOT_FOUND" });
   if (parsed.code === "BAD_REQUEST") return json(requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: parsed.error });
   return json(requestId, 502, { ok: false, code: parsed.code, error: parsed.error });
@@ -52,8 +52,15 @@ export async function POST(request: Request) {
     return json(auth.requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: "Invalid release payload" });
   }
 
-  const gas = await callGas<ReleaseResp>("inventory.release.create", { sku_id: skuId, location_id: locationId, qty, reason, proof_ref: proofRef }, auth.requestId);
+  const gas = await callGas<ReleaseResp>("inventory.release", { sku_id: skuId, location_id: locationId, qty, reason, proof_ref: proofRef }, auth.requestId);
   if (!gas.ok || !gas.data) return mapError(auth.requestId, (gas as { error?: unknown }).error);
 
-  return json(auth.requestId, 200, { ok: true, ...(gas.data.replayed === true ? { replayed: true } : {}), sku_id: skuId, location_id: locationId, qty });
+  return json(auth.requestId, 200, {
+    ok: true,
+    ...(gas.data.replayed === true ? { replayed: true } : {}),
+    release_id: typeof gas.data.release_id === "string" ? gas.data.release_id : "",
+    sku_id: skuId,
+    location_id: locationId,
+    qty,
+  });
 }
