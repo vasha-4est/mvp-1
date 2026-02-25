@@ -19,6 +19,7 @@ const LINKS = [
   { href: "/drying", label: "Drying" },
   { href: "/packaging", label: "Packaging" },
   { href: "/control-tower", label: "Control Tower" },
+  { href: "/kpi/deficit", label: "Deficit KPI" },
 ] as const;
 
 export default function AppTopNav() {

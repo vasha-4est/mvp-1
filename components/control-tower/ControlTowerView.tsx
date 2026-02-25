@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 
 import { ControlTowerErrorState } from "./ControlTowerErrorState";
 import { ControlTowerLoadingState } from "./ControlTowerLoadingState";
@@ -151,6 +152,7 @@ export function ControlTowerView() {
   const assemblyIntelligence = asRecord(intelligenceRoot.assembly) ?? {};
   const availabilityStats = asRecord(assemblyIntelligence.availability_stats) ?? {};
   const topBottlenecks = getTopBottlenecks(assemblyIntelligence.top_bottlenecks).slice(0, 5);
+  const deficitSummary = asRecord(data.deficit_summary);
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -207,6 +209,19 @@ export function ControlTowerView() {
               </ol>
             )}
           </div>
+        </ControlTowerSection>
+
+        <ControlTowerSection title="Deficit">
+          <p style={{ margin: 0, color: "#374151" }}>Track shortage KPI and incidents in the dedicated page.</p>
+          {deficitSummary ? (
+            <p style={{ margin: "8px 0 0" }}>
+              <strong>total_missing_qty</strong>: {formatNumber(deficitSummary.total_missing_qty)} · <strong>open_incidents</strong>: {" "}
+              {formatNumber(deficitSummary.open_incidents)}
+            </p>
+          ) : null}
+          <p style={{ margin: "10px 0 0" }}>
+            <Link href="/kpi/deficit">Open Deficit KPI</Link>
+          </p>
         </ControlTowerSection>
       </div>
     </div>
