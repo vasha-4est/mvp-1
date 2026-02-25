@@ -24,6 +24,8 @@ type LoadState =
   | { status: "loading" }
   | { status: "ready"; data: ShipmentReadinessPayload | null; error: string | null };
 
+const EMPTY_STATE_TEXT = "No shipments to show.";
+
 function asString(value: unknown): string {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -127,7 +129,7 @@ export default function ShipmentReadinessView() {
       {state.status === "ready" && !state.error ? (
         <article style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 14, background: "#fff" }}>
           {rows.length === 0 ? (
-            <p style={{ margin: 0, color: "#6b7280" }}>No shipments to show.</p>
+            <p style={{ margin: 0, color: "#6b7280" }}>{EMPTY_STATE_TEXT}</p>
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
