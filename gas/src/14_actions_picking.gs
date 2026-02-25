@@ -7,7 +7,6 @@
 
   Actions_.register_('picking.lists.create', (ctx) => {
     Validate_.requireFlag_(ctx.flags, FLAG.PICKING_CORE);
-    Validate_.requireFlag_(ctx.flags, FLAG.INVENTORY_CORE);
 
     const payload = ctx.payload || {};
     const warehouseKey = String(payload.warehouse_key || '').trim();
@@ -209,6 +208,7 @@
     const requestId = String(ctx.requestId || '').trim();
     const pickingListId = String(payload.picking_list_id || '').trim();
     const lines = Array.isArray(payload.lines) ? payload.lines : [];
+    const notes = String(payload.notes || '').trim();
     const action = 'picking.confirm';
 
     if (!requestId) throw new Error(ERROR.BAD_REQUEST + ': request_id is required');
@@ -219,83 +219,114 @@
       return replayPickingConfirmResponse_(requestId, pickingListId);
     }
 
-    const normalizedLines = normalizeConfirmLines_(lines);
-    const nowTs = nowIso_();
-    const results = [];
+    return withEntitySheetLock_(ctx, 'picking_list', pickingListId, () => {
+      const pickingList = Db_.findBy_(SHEET.PICKING_LISTS, 'picking_list_id', pickingListId);
+      if (!pickingList) throw new Error(ERROR.NOT_FOUND + ': picking_list_id');
 
-    for (let i = 0; i < normalizedLines.length; i++) {
-      const lineInput = normalizedLines[i];
-      const lineId = lineInput.line_id;
+      const listStatus = String(pickingList.status || '').trim().toUpperCase();
+      if (listStatus === 'DONE' || listStatus === 'CANCELLED' || listStatus === 'CLOSED') {
+        throw new Error(ERROR.BAD_REQUEST + ': picking_list is not open');
+      }
 
-      withEntitySheetLock_(ctx, 'picking_line', lineId, () => {
-        const line = findPickingLine_(pickingListId, lineId);
-        if (!line) {
-          throw new Error(ERROR.NOT_FOUND + ': line_id');
+      const normalizedLines = normalizeConfirmLines_(lines);
+      const nowTs = nowIso_();
+      const lineSummaries = [];
+      let totalPickedQty = 0;
+      let totalShortQty = 0;
+
+      for (let i = 0; i < normalizedLines.length; i++) {
+        const lineInput = normalizedLines[i];
+        const line = findPickingLine_(pickingListId, lineInput.line_id);
+        if (!line) throw new Error(ERROR.NOT_FOUND + ': line_id');
+
+        const skuId = String(line.sku_id || '').trim();
+        if (lineInput.sku_id && lineInput.sku_id !== skuId) {
+          throw new Error(ERROR.BAD_REQUEST + ': sku_id mismatch for line_id');
         }
 
         const plannedQty = numberOrZero_(line.planned_qty || line.qty_required);
-        if (lineInput.picked_qty > plannedQty) {
+        if (lineInput.planned_qty !== null && lineInput.planned_qty !== plannedQty) {
+          throw new Error(ERROR.BAD_REQUEST + ': planned_qty mismatch for line_id');
+        }
+
+        const pickedQty = lineInput.picked_qty;
+        if (pickedQty > plannedQty) {
           throw new Error(ERROR.BAD_REQUEST + ': picked_qty cannot exceed planned_qty');
         }
 
-        const shortQty = plannedQty - lineInput.picked_qty;
+        const inferredShortQty = plannedQty - pickedQty;
+        const shortQty = lineInput.short_qty === null ? inferredShortQty : lineInput.short_qty;
+        if (shortQty !== inferredShortQty) {
+          throw new Error(ERROR.BAD_REQUEST + ': short_qty must equal planned_qty - picked_qty');
+        }
+
         if (shortQty > 0 && !lineInput.short_reason) {
           throw new Error(ERROR.BAD_REQUEST + ': short_reason is required when short_qty > 0');
         }
 
         const patch = buildConfirmPatch_(line, {
-          pickedQty: lineInput.picked_qty,
+          pickedQty,
           shortQty,
           shortReason: lineInput.short_reason,
+          blockedReason: lineInput.blocked_reason,
           proofRef: lineInput.proof_ref,
           nowTs,
           actorUserId: ctx && ctx.actor && ctx.actor.employee_id ? String(ctx.actor.employee_id).trim() : '',
           actorRoleId: ctx && ctx.actor && ctx.actor.role ? String(ctx.actor.role).trim() : '',
+          requestId,
         });
 
-        const updateResult = Db_.updateByPk_(SHEET.PICKING_LINES, 'line_id', lineId, patch);
+        const updateResult = Db_.updateByPk_(SHEET.PICKING_LINES, 'line_id', lineInput.line_id, patch);
         if (!updateResult.updated) {
           throw new Error(updateResult.reason || ERROR.BAD_REQUEST);
         }
 
-        if (ctx.flags.isOn(FLAG.INVENTORY_CORE) && shortQty > 0) {
-          const releaseCtx = withChildRequest_(ctx, requestId + ':line:' + i + ':release', {
-            sku_id: String(line.sku_id || '').trim(),
-            location_id: String(line.location_id || '').trim(),
-            qty: shortQty,
-            reason: 'picking_confirm_short_release',
-            proof_ref: pickingListId + ':' + lineId,
-          });
-          Actions_.dispatch_('inventory.release', releaseCtx);
+        if (shortQty > 0) {
+          const locationId = String(line.location_id || '').trim();
+          if (locationId) {
+            const releaseCtx = withChildRequest_(ctx, requestId + ':line:' + i + ':release', {
+              sku_id: skuId,
+              location_id: locationId,
+              qty: shortQty,
+              reason: 'picking_confirm_short_release',
+              proof_ref: pickingListId + ':' + lineInput.line_id,
+            });
+            Actions_.dispatch_('inventory.release', releaseCtx);
+          }
         }
 
-        appendPickingEvent_(ctx, 'picking_confirmed', 'picking_line', lineId, {
-          picking_list_id: pickingListId,
-          line_id: lineId,
-          sku_id: String(line.sku_id || '').trim(),
+        lineSummaries.push({
+          line_id: lineInput.line_id,
+          sku_id: skuId,
           planned_qty: plannedQty,
-          picked_qty: lineInput.picked_qty,
+          picked_qty: pickedQty,
           short_qty: shortQty,
           short_reason: lineInput.short_reason,
-        }, nowTs);
-
-        results.push({
-          line_id: lineId,
-          planned_qty: plannedQty,
-          picked_qty: lineInput.picked_qty,
-          short_qty: shortQty,
-          status: 'done',
         });
-      });
-    }
+        totalPickedQty += pickedQty;
+        totalShortQty += shortQty;
+      }
 
-    markIdempotent_(requestId, action, true);
+      appendPickingEvent_(ctx, 'picking_confirmed', 'picking_list', pickingListId, {
+        picking_list_id: pickingListId,
+        confirmed_lines: lineSummaries.length,
+        total_picked_qty: totalPickedQty,
+        total_short_qty: totalShortQty,
+        notes,
+        lines: lineSummaries,
+      }, nowTs);
 
-    return {
-      ok: true,
-      picking_list_id: pickingListId,
-      results,
-    };
+      markIdempotent_(requestId, action, true);
+
+      return {
+        ok: true,
+        replayed: false,
+        picking_list_id: pickingListId,
+        confirmed_lines: lineSummaries.length,
+        total_picked_qty: totalPickedQty,
+        total_short_qty: totalShortQty,
+      };
+    });
   });
 
   function normalizeLines_(lines) {
@@ -323,25 +354,55 @@
 
   function normalizeConfirmLines_(lines) {
     const out = [];
+    const shortReasonAllowed = {
+      OUT_OF_STOCK: true,
+      DAMAGED: true,
+      NOT_FOUND: true,
+      OTHER: true,
+    };
 
     for (let i = 0; i < lines.length; i++) {
       const row = lines[i] || {};
       const lineId = String(row.line_id || row.picking_line_id || '').trim();
+      const skuId = String(row.sku_id || '').trim();
+      const plannedQtyRaw = row.planned_qty;
+      const plannedQty = plannedQtyRaw === undefined || plannedQtyRaw === null ? null : Number(plannedQtyRaw);
       const pickedQty = Number(row.picked_qty);
+      const shortQtyRaw = row.short_qty;
+      const shortQty = shortQtyRaw === undefined || shortQtyRaw === null ? null : Number(shortQtyRaw);
       const shortReasonRaw = row.short_reason;
       const shortReason = typeof shortReasonRaw === 'string' ? shortReasonRaw.trim() : '';
+      const blockedReasonRaw = row.blocked_reason;
+      const blockedReason = typeof blockedReasonRaw === 'string' ? blockedReasonRaw.trim() : '';
       const proofRefRaw = row.proof_ref;
       const proofRef = typeof proofRefRaw === 'string' ? proofRefRaw.trim() : '';
 
       if (!lineId) throw new Error(ERROR.BAD_REQUEST + ': line_id is required');
-      if (!Number.isFinite(pickedQty) || pickedQty < 0) {
-        throw new Error(ERROR.BAD_REQUEST + ': picked_qty must be a number >= 0');
+      if (!skuId) throw new Error(ERROR.BAD_REQUEST + ': sku_id is required');
+      if (!Number.isFinite(pickedQty) || pickedQty < 0 || Math.floor(pickedQty) !== pickedQty) {
+        throw new Error(ERROR.BAD_REQUEST + ': picked_qty must be an integer >= 0');
+      }
+
+      if (plannedQty !== null && (!Number.isFinite(plannedQty) || plannedQty < 0 || Math.floor(plannedQty) !== plannedQty)) {
+        throw new Error(ERROR.BAD_REQUEST + ': planned_qty must be an integer >= 0');
+      }
+
+      if (shortQty !== null && (!Number.isFinite(shortQty) || shortQty < 0 || Math.floor(shortQty) !== shortQty)) {
+        throw new Error(ERROR.BAD_REQUEST + ': short_qty must be an integer >= 0');
+      }
+
+      if (shortQty !== null && shortQty > 0 && !shortReasonAllowed[shortReason]) {
+        throw new Error(ERROR.BAD_REQUEST + ': short_reason must be one of OUT_OF_STOCK|DAMAGED|NOT_FOUND|OTHER');
       }
 
       out.push({
         line_id: lineId,
+        sku_id: skuId,
+        planned_qty: plannedQty,
         picked_qty: pickedQty,
+        short_qty: shortQty,
         short_reason: shortReason,
+        blocked_reason: blockedReason,
         proof_ref: proofRef,
       });
     }
@@ -355,22 +416,22 @@
       qty_picked: String(input.pickedQty),
       qty_done: String(input.pickedQty),
       qty_blocked: String(input.shortQty > 0 ? input.shortQty : 0),
-      blocked_reason: input.shortQty > 0 ? input.shortReason : '',
-      task_status: 'done',
-      status: 'DONE',
+      blocked_reason: input.blockedReason || (input.shortQty > 0 ? input.shortReason : ''),
+      task_status: input.shortQty > 0 ? 'blocked' : 'done',
+      status: input.shortQty > 0 ? 'PARTIAL' : 'DONE',
       done_at: input.nowTs,
       done_by_user_id: input.actorUserId,
       done_by_role_id: input.actorRoleId,
       proof_ref: input.proofRef,
+      request_id: input.requestId,
       updated_at: input.nowTs,
     };
 
     const existingPayload = parseJsonSafe_(line.payload_json);
     const payload = existingPayload && typeof existingPayload === 'object' ? existingPayload : {};
-    if (input.shortQty > 0) {
-      payload.short_reason = input.shortReason;
-      payload.short_qty = input.shortQty;
-    }
+    payload.short_reason = input.shortReason || '';
+    payload.short_qty = input.shortQty;
+    payload.confirmed_at = input.nowTs;
 
     patch.payload_json = JSON.stringify(payload);
     return patch;
@@ -391,24 +452,25 @@
       return String(row.request_id || '').trim() === String(requestId || '').trim() && String(row.event_type || '').trim() === 'picking_confirmed';
     });
 
-    const results = [];
-    for (let i = 0; i < rows.length; i++) {
-      const payload = parseJsonSafe_(rows[i].payload_json);
-      if (!payload) continue;
-      results.push({
-        line_id: String(payload.line_id || rows[i].entity_id || '').trim(),
-        planned_qty: numberOrZero_(payload.planned_qty),
-        picked_qty: numberOrZero_(payload.picked_qty),
-        short_qty: numberOrZero_(payload.short_qty),
-        status: 'done',
-      });
+    if (rows.length === 0) {
+      return {
+        ok: true,
+        replayed: true,
+        picking_list_id: pickingListId || findPickingListIdByRequest_(requestId),
+        confirmed_lines: 0,
+        total_picked_qty: 0,
+        total_short_qty: 0,
+      };
     }
 
+    const payload = parseJsonSafe_(rows[0].payload_json) || {};
     return {
       ok: true,
       replayed: true,
-      picking_list_id: pickingListId || findPickingListIdByRequest_(requestId),
-      results,
+      picking_list_id: String(payload.picking_list_id || pickingListId || findPickingListIdByRequest_(requestId)).trim(),
+      confirmed_lines: numberOrZero_(payload.confirmed_lines),
+      total_picked_qty: numberOrZero_(payload.total_picked_qty),
+      total_short_qty: numberOrZero_(payload.total_short_qty),
     };
   }
 
@@ -447,7 +509,7 @@
 
         const status = String(lockRows[i][lockIdx.status] || '').trim();
         if (status === 'active') {
-          throw new Error(ERROR.LOCK_CONFLICT + ': Picking entity is locked');
+          throw new Error(ERROR.LOCK_CONFLICT + ': entity is locked');
         }
       }
 

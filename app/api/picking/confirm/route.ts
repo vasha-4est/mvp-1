@@ -8,28 +8,42 @@ import { requireAnyRole } from "@/lib/server/guards";
 
 type ConfirmLineInput = {
   line_id?: unknown;
+  sku_id?: unknown;
+  warehouse_key?: unknown;
+  planned_qty?: unknown;
   picked_qty?: unknown;
+  short_qty?: unknown;
   short_reason?: unknown;
+  blocked_reason?: unknown;
   proof_ref?: unknown;
 };
 
 type ConfirmBody = {
   picking_list_id?: unknown;
   lines?: unknown;
-};
-
-type ConfirmResult = {
-  line_id: string;
-  planned_qty: number;
-  picked_qty: number;
-  short_qty: number;
-  status: "done";
+  notes?: unknown;
 };
 
 type GasConfirmResponse = {
   replayed?: unknown;
   picking_list_id?: unknown;
-  results?: unknown[];
+  confirmed_lines?: unknown;
+  total_picked_qty?: unknown;
+  total_short_qty?: unknown;
+};
+
+const ALLOWED_SHORT_REASONS = new Set(["OUT_OF_STOCK", "DAMAGED", "NOT_FOUND", "OTHER"]);
+
+type NormalizedLine = {
+  line_id: string;
+  sku_id: string;
+  warehouse_key: string;
+  planned_qty: number | null;
+  picked_qty: number;
+  short_qty: number | null;
+  short_reason: string | null;
+  blocked_reason: string | null;
+  proof_ref: string | null;
 };
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
@@ -54,57 +68,64 @@ function num(value: unknown): number | null {
   return null;
 }
 
-function normalizeLine(line: unknown): { line_id: string; picked_qty: number; short_reason: string | null; proof_ref: string | null } | null {
-  if (typeof line !== "object" || line === null) return null;
+function normalizeLine(raw: unknown): { ok: true; line: NormalizedLine } | { ok: false; error: string } {
+  if (typeof raw !== "object" || raw === null) {
+    return { ok: false, error: "line must be an object" };
+  }
 
-  const input = line as ConfirmLineInput;
-  const lineId = str(input.line_id);
-  const pickedQty = num(input.picked_qty);
-  const shortReasonRaw = input.short_reason;
-  const shortReason = shortReasonRaw === null ? null : str(shortReasonRaw);
-  const proofRefRaw = input.proof_ref;
-  const proofRef = proofRefRaw === null ? null : str(proofRefRaw);
+  const line = raw as ConfirmLineInput;
+  const lineId = str(line.line_id);
+  const skuId = str(line.sku_id);
+  const warehouseKey = str(line.warehouse_key);
+  const plannedQty = line.planned_qty === undefined ? null : num(line.planned_qty);
+  const pickedQty = num(line.picked_qty);
+  const shortQty = line.short_qty === undefined ? null : num(line.short_qty);
+  const shortReason = line.short_reason === undefined || line.short_reason === null ? null : str(line.short_reason);
+  const blockedReason = line.blocked_reason === undefined || line.blocked_reason === null ? null : str(line.blocked_reason);
+  const proofRef = line.proof_ref === undefined || line.proof_ref === null ? null : str(line.proof_ref);
 
-  if (!lineId || pickedQty === null || pickedQty < 0) return null;
+  if (!lineId) return { ok: false, error: "line_id is required" };
+  if (!skuId) return { ok: false, error: "sku_id is required" };
+  if (pickedQty === null || !Number.isInteger(pickedQty) || pickedQty < 0) {
+    return { ok: false, error: "picked_qty must be an integer >= 0" };
+  }
+
+  if (plannedQty !== null && (!Number.isInteger(plannedQty) || plannedQty < 0)) {
+    return { ok: false, error: "planned_qty must be an integer >= 0" };
+  }
+
+  if (shortQty !== null && (!Number.isInteger(shortQty) || shortQty < 0)) {
+    return { ok: false, error: "short_qty must be an integer >= 0" };
+  }
+
+  if (shortQty !== null && shortQty > 0) {
+    if (!shortReason || !ALLOWED_SHORT_REASONS.has(shortReason)) {
+      return { ok: false, error: "short_reason must be one of OUT_OF_STOCK|DAMAGED|NOT_FOUND|OTHER when short_qty > 0" };
+    }
+  }
 
   return {
-    line_id: lineId,
-    picked_qty: pickedQty,
-    short_reason: shortReason && shortReason.length > 0 ? shortReason : null,
-    proof_ref: proofRef && proofRef.length > 0 ? proofRef : null,
-  };
-}
-
-function normalizeResults(raw: unknown): ConfirmResult[] {
-  if (!Array.isArray(raw)) return [];
-
-  const out: ConfirmResult[] = [];
-  for (const item of raw) {
-    if (typeof item !== "object" || item === null) continue;
-    const row = item as Record<string, unknown>;
-    const lineId = str(row.line_id);
-    const plannedQty = num(row.planned_qty);
-    const pickedQty = num(row.picked_qty);
-    const shortQty = num(row.short_qty);
-
-    if (!lineId || plannedQty === null || pickedQty === null || shortQty === null) continue;
-
-    out.push({
+    ok: true,
+    line: {
       line_id: lineId,
+      sku_id: skuId,
+      warehouse_key: warehouseKey,
       planned_qty: plannedQty,
       picked_qty: pickedQty,
       short_qty: shortQty,
-      status: "done",
-    });
-  }
-
-  return out;
+      short_reason: shortReason,
+      blocked_reason: blockedReason && blockedReason.length > 0 ? blockedReason : null,
+      proof_ref: proofRef && proofRef.length > 0 ? proofRef : null,
+    },
+  };
 }
 
 function mapError(requestId: string, raw: unknown) {
   const parsed = parseErrorPayload(raw);
 
   if (parsed.code === "LOCK_CONFLICT") return json(requestId, 409, { ok: false, code: "LOCK_CONFLICT", error: parsed.error });
+  if (parsed.code === "NOT_FOUND") return json(requestId, 404, { ok: false, code: "NOT_FOUND", error: parsed.error });
+  if (parsed.code === "FLAG_DISABLED") return json(requestId, 400, { ok: false, code: "FLAG_DISABLED", error: parsed.error });
   if (parsed.code === "UNAUTHORIZED") return json(requestId, 401, { ok: false, code: "UNAUTHORIZED", error: parsed.error });
   if (parsed.code === "FORBIDDEN") return json(requestId, 403, { ok: false, code: "FORBIDDEN", error: parsed.error });
   if (parsed.code === "BAD_REQUEST" || parsed.code === "VALIDATION_ERROR") {
@@ -127,14 +148,14 @@ export async function POST(request: Request) {
     });
   }
 
-  const readonly = await requireWritable(request, auth.requestId);
+  const readonly = await requireWritable(request, requestId);
   if (readonly) return readonly;
 
   let body: ConfirmBody;
   try {
     body = (await request.json()) as ConfirmBody;
   } catch {
-    return json(auth.requestId, 400, {
+    return json(requestId, 400, {
       ok: false,
       code: "VALIDATION_ERROR",
       error: "Invalid JSON body",
@@ -143,21 +164,27 @@ export async function POST(request: Request) {
 
   const pickingListId = str(body.picking_list_id);
   const linesRaw = Array.isArray(body.lines) ? body.lines : null;
+  const notes = str(body.notes);
+
   if (!pickingListId || !linesRaw || linesRaw.length === 0) {
-    return json(auth.requestId, 400, {
+    return json(requestId, 400, {
       ok: false,
       code: "VALIDATION_ERROR",
       error: "Invalid picking confirm payload",
     });
   }
 
-  const lines = linesRaw.map((line) => normalizeLine(line));
-  if (lines.some((line) => line === null)) {
-    return json(auth.requestId, 400, {
-      ok: false,
-      code: "VALIDATION_ERROR",
-      error: "Invalid picking line payload",
-    });
+  const lines: NormalizedLine[] = [];
+  for (const rawLine of linesRaw) {
+    const normalized = normalizeLine(rawLine);
+    if (normalized.ok === false) {
+      return json(requestId, 400, {
+        ok: false,
+        code: "VALIDATION_ERROR",
+        error: normalized.error,
+      });
+    }
+    lines.push(normalized.line);
   }
 
   const gas = await callGas<GasConfirmResponse>(
@@ -165,18 +192,21 @@ export async function POST(request: Request) {
     {
       picking_list_id: pickingListId,
       lines,
+      notes,
     },
-    auth.requestId
+    requestId
   );
 
   if (!gas.ok || !gas.data) {
-    return mapError(auth.requestId, (gas as { error?: unknown }).error);
+    return mapError(requestId, (gas as { error?: unknown }).error);
   }
 
-  return json(auth.requestId, gas.data.replayed === true ? 200 : 201, {
+  return json(requestId, gas.data.replayed === true ? 200 : 201, {
     ok: true,
-    ...(gas.data.replayed === true ? { replayed: true } : {}),
+    replayed: gas.data.replayed === true,
     picking_list_id: str(gas.data.picking_list_id) || pickingListId,
-    results: normalizeResults(gas.data.results),
+    confirmed_lines: num(gas.data.confirmed_lines) ?? 0,
+    total_picked_qty: num(gas.data.total_picked_qty) ?? 0,
+    total_short_qty: num(gas.data.total_short_qty) ?? 0,
   });
 }
