@@ -51,6 +51,7 @@ export type PickingLine = {
   planned_qty: number;
   picked_qty: number | null;
   status: string | null;
+  task_status: string | null;
 };
 
 function normalizePickingList(row: PickingListRow): PickingListSummary | null {
@@ -80,6 +81,7 @@ function normalizePickingLine(row: PickingLineRow): PickingLine | null {
     planned_qty: plannedQty,
     picked_qty: num(row.picked_qty ?? row.qty_picked),
     status: str(row.status),
+    task_status: str(row.task_status),
   };
 }
 
@@ -146,6 +148,39 @@ export async function readPickingListById(
     ok: true,
     picking_list: pickingList,
     lines: linesRaw
+      .filter((line): line is PickingLineRow => typeof line === "object" && line !== null)
+      .map((line) => normalizePickingLine(line))
+      .filter((line): line is PickingLine => Boolean(line)),
+  };
+}
+
+type GasPickingLinesGetResponse = {
+  lines?: unknown[];
+};
+
+export async function readPickingLines(
+  requestId: string,
+  pickingListId: string,
+  limit: number
+): Promise<{ ok: true; items: PickingLine[] } | ReadError> {
+  const response = await callGas<GasPickingLinesGetResponse>(
+    "picking.lines.get",
+    {
+      ...(pickingListId ? { picking_list_id: pickingListId } : {}),
+    },
+    requestId
+  );
+
+  if (!response.ok || !response.data) {
+    return toError(response.error, "Failed to read picking lines");
+  }
+
+  const rows = Array.isArray(response.data.lines) ? response.data.lines : [];
+
+  return {
+    ok: true,
+    items: rows
+      .slice(0, limit)
       .filter((line): line is PickingLineRow => typeof line === "object" && line !== null)
       .map((line) => normalizePickingLine(line))
       .filter((line): line is PickingLine => Boolean(line)),

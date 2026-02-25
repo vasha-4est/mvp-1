@@ -2,10 +2,12 @@
 
 (function initPickingActions_(){
   const SERVICE_TIMEZONE = 'Europe/Moscow';
+  const ENTITY_LOCK_TTL_SEC = 30;
   const WEBAPP_SOURCE = 'webapp';
 
   Actions_.register_('picking.lists.create', (ctx) => {
     Validate_.requireFlag_(ctx.flags, FLAG.PICKING_CORE);
+    Validate_.requireFlag_(ctx.flags, FLAG.INVENTORY_CORE);
 
     const payload = ctx.payload || {};
     const warehouseKey = String(payload.warehouse_key || '').trim();
@@ -199,6 +201,103 @@
     return { line: res.row };
   });
 
+  Actions_.register_('picking.confirm', (ctx) => {
+    Validate_.requireFlag_(ctx.flags, FLAG.PICKING_CORE);
+    Validate_.requireFlag_(ctx.flags, FLAG.INVENTORY_CORE);
+
+    const payload = ctx.payload || {};
+    const requestId = String(ctx.requestId || '').trim();
+    const pickingListId = String(payload.picking_list_id || '').trim();
+    const lines = Array.isArray(payload.lines) ? payload.lines : [];
+    const action = 'picking.confirm';
+
+    if (!requestId) throw new Error(ERROR.BAD_REQUEST + ': request_id is required');
+    if (!pickingListId) throw new Error(ERROR.BAD_REQUEST + ': picking_list_id is required');
+    if (lines.length === 0) throw new Error(ERROR.BAD_REQUEST + ': lines must not be empty');
+
+    if (idempExists_(requestId, action)) {
+      return replayPickingConfirmResponse_(requestId, pickingListId);
+    }
+
+    const normalizedLines = normalizeConfirmLines_(lines);
+    const nowTs = nowIso_();
+    const results = [];
+
+    for (let i = 0; i < normalizedLines.length; i++) {
+      const lineInput = normalizedLines[i];
+      const lineId = lineInput.line_id;
+
+      withEntitySheetLock_(ctx, 'picking_line', lineId, () => {
+        const line = findPickingLine_(pickingListId, lineId);
+        if (!line) {
+          throw new Error(ERROR.NOT_FOUND + ': line_id');
+        }
+
+        const plannedQty = numberOrZero_(line.planned_qty || line.qty_required);
+        if (lineInput.picked_qty > plannedQty) {
+          throw new Error(ERROR.BAD_REQUEST + ': picked_qty cannot exceed planned_qty');
+        }
+
+        const shortQty = plannedQty - lineInput.picked_qty;
+        if (shortQty > 0 && !lineInput.short_reason) {
+          throw new Error(ERROR.BAD_REQUEST + ': short_reason is required when short_qty > 0');
+        }
+
+        const patch = buildConfirmPatch_(line, {
+          pickedQty: lineInput.picked_qty,
+          shortQty,
+          shortReason: lineInput.short_reason,
+          proofRef: lineInput.proof_ref,
+          nowTs,
+          actorUserId: ctx && ctx.actor && ctx.actor.employee_id ? String(ctx.actor.employee_id).trim() : '',
+          actorRoleId: ctx && ctx.actor && ctx.actor.role ? String(ctx.actor.role).trim() : '',
+        });
+
+        const updateResult = Db_.updateByPk_(SHEET.PICKING_LINES, 'line_id', lineId, patch);
+        if (!updateResult.updated) {
+          throw new Error(updateResult.reason || ERROR.BAD_REQUEST);
+        }
+
+        if (ctx.flags.isOn(FLAG.INVENTORY_CORE) && shortQty > 0) {
+          const releaseCtx = withChildRequest_(ctx, requestId + ':line:' + i + ':release', {
+            sku_id: String(line.sku_id || '').trim(),
+            location_id: String(line.location_id || '').trim(),
+            qty: shortQty,
+            reason: 'picking_confirm_short_release',
+            proof_ref: pickingListId + ':' + lineId,
+          });
+          Actions_.dispatch_('inventory.release', releaseCtx);
+        }
+
+        appendPickingEvent_(ctx, 'picking_confirmed', 'picking_line', lineId, {
+          picking_list_id: pickingListId,
+          line_id: lineId,
+          sku_id: String(line.sku_id || '').trim(),
+          planned_qty: plannedQty,
+          picked_qty: lineInput.picked_qty,
+          short_qty: shortQty,
+          short_reason: lineInput.short_reason,
+        }, nowTs);
+
+        results.push({
+          line_id: lineId,
+          planned_qty: plannedQty,
+          picked_qty: lineInput.picked_qty,
+          short_qty: shortQty,
+          status: 'done',
+        });
+      });
+    }
+
+    markIdempotent_(requestId, action, true);
+
+    return {
+      ok: true,
+      picking_list_id: pickingListId,
+      results,
+    };
+  });
+
   function normalizeLines_(lines) {
     const out = [];
 
@@ -220,6 +319,202 @@
     }
 
     return out;
+  }
+
+  function normalizeConfirmLines_(lines) {
+    const out = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const row = lines[i] || {};
+      const lineId = String(row.line_id || row.picking_line_id || '').trim();
+      const pickedQty = Number(row.picked_qty);
+      const shortReasonRaw = row.short_reason;
+      const shortReason = typeof shortReasonRaw === 'string' ? shortReasonRaw.trim() : '';
+      const proofRefRaw = row.proof_ref;
+      const proofRef = typeof proofRefRaw === 'string' ? proofRefRaw.trim() : '';
+
+      if (!lineId) throw new Error(ERROR.BAD_REQUEST + ': line_id is required');
+      if (!Number.isFinite(pickedQty) || pickedQty < 0) {
+        throw new Error(ERROR.BAD_REQUEST + ': picked_qty must be a number >= 0');
+      }
+
+      out.push({
+        line_id: lineId,
+        picked_qty: pickedQty,
+        short_reason: shortReason,
+        proof_ref: proofRef,
+      });
+    }
+
+    return out;
+  }
+
+  function buildConfirmPatch_(line, input) {
+    const patch = {
+      picked_qty: String(input.pickedQty),
+      qty_picked: String(input.pickedQty),
+      qty_done: String(input.pickedQty),
+      qty_blocked: String(input.shortQty > 0 ? input.shortQty : 0),
+      blocked_reason: input.shortQty > 0 ? input.shortReason : '',
+      task_status: 'done',
+      status: 'DONE',
+      done_at: input.nowTs,
+      done_by_user_id: input.actorUserId,
+      done_by_role_id: input.actorRoleId,
+      proof_ref: input.proofRef,
+      updated_at: input.nowTs,
+    };
+
+    const existingPayload = parseJsonSafe_(line.payload_json);
+    const payload = existingPayload && typeof existingPayload === 'object' ? existingPayload : {};
+    if (input.shortQty > 0) {
+      payload.short_reason = input.shortReason;
+      payload.short_qty = input.shortQty;
+    }
+
+    patch.payload_json = JSON.stringify(payload);
+    return patch;
+  }
+
+  function findPickingLine_(pickingListId, lineId) {
+    const rows = Db_.query_(SHEET.PICKING_LINES, (row) => {
+      const rowListId = String(row.picking_list_id || '').trim();
+      const rowLineId = String(row.line_id || row.picking_line_id || '').trim();
+      return rowListId === pickingListId && rowLineId === lineId;
+    });
+
+    return rows.length > 0 ? rows[0] : null;
+  }
+
+  function replayPickingConfirmResponse_(requestId, pickingListId) {
+    const rows = Db_.query_(SHEET.EVENTS, (row) => {
+      return String(row.request_id || '').trim() === String(requestId || '').trim() && String(row.event_type || '').trim() === 'picking_confirmed';
+    });
+
+    const results = [];
+    for (let i = 0; i < rows.length; i++) {
+      const payload = parseJsonSafe_(rows[i].payload_json);
+      if (!payload) continue;
+      results.push({
+        line_id: String(payload.line_id || rows[i].entity_id || '').trim(),
+        planned_qty: numberOrZero_(payload.planned_qty),
+        picked_qty: numberOrZero_(payload.picked_qty),
+        short_qty: numberOrZero_(payload.short_qty),
+        status: 'done',
+      });
+    }
+
+    return {
+      ok: true,
+      replayed: true,
+      picking_list_id: pickingListId || findPickingListIdByRequest_(requestId),
+      results,
+    };
+  }
+
+  function withEntitySheetLock_(ctx, entityType, entityId, fn) {
+    const lockKey = entityType + ':' + entityId;
+    const now = new Date();
+    const acquiredAt = now.toISOString();
+    const expiresAt = new Date(now.getTime() + ENTITY_LOCK_TTL_SEC * 1000).toISOString();
+    const lockSheet = Sys_.sheet_(SHEET.LOCKS);
+    const lockHeader = lockSheet.getRange(1, 1, 1, lockSheet.getLastColumn()).getValues()[0].map(String);
+    const lockIdx = indexLock_(lockHeader, [
+      'lock_key',
+      'entity_type',
+      'entity_id',
+      'held_by_user_id',
+      'held_by_role_id',
+      'acquired_at',
+      'expires_at',
+      'status',
+    ]);
+
+    const lastRow = lockSheet.getLastRow();
+    if (lastRow >= 2) {
+      const lockRows = lockSheet.getRange(2, 1, lastRow - 1, lockHeader.length).getValues();
+      const toDelete = [];
+
+      for (let i = 0; i < lockRows.length; i++) {
+        if (String(lockRows[i][lockIdx.lock_key] || '').trim() !== lockKey) continue;
+
+        const expiresAtValue = new Date(String(lockRows[i][lockIdx.expires_at] || '').trim());
+        const isExpired = Number.isFinite(expiresAtValue.getTime()) && expiresAtValue.getTime() < now.getTime();
+        if (isExpired) {
+          toDelete.push(i + 2);
+          continue;
+        }
+
+        const status = String(lockRows[i][lockIdx.status] || '').trim();
+        if (status === 'active') {
+          throw new Error(ERROR.LOCK_CONFLICT + ': Picking entity is locked');
+        }
+      }
+
+      for (let j = toDelete.length - 1; j >= 0; j--) {
+        lockSheet.deleteRow(toDelete[j]);
+      }
+    }
+
+    lockSheet.appendRow(lockHeader.map((columnName) => {
+      if (columnName === 'lock_key') return lockKey;
+      if (columnName === 'entity_type') return entityType;
+      if (columnName === 'entity_id') return entityId;
+      if (columnName === 'held_by_user_id') return ctx && ctx.actor && ctx.actor.employee_id ? String(ctx.actor.employee_id).trim() : 'system';
+      if (columnName === 'held_by_role_id') return ctx && ctx.actor && ctx.actor.role ? String(ctx.actor.role).trim() : '';
+      if (columnName === 'acquired_at') return acquiredAt;
+      if (columnName === 'expires_at') return expiresAt;
+      if (columnName === 'status') return 'active';
+      return '';
+    }));
+
+    try {
+      return fn();
+    } finally {
+      const currentLastRow = lockSheet.getLastRow();
+      if (currentLastRow < 2) return;
+
+      const rows = lockSheet.getRange(2, 1, currentLastRow - 1, lockHeader.length).getValues();
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const rowLockKey = String(rows[i][lockIdx.lock_key] || '').trim();
+        const rowAcquiredAt = String(rows[i][lockIdx.acquired_at] || '').trim();
+        if (rowLockKey === lockKey && rowAcquiredAt === acquiredAt) {
+          lockSheet.deleteRow(i + 2);
+          break;
+        }
+      }
+    }
+  }
+
+  function indexLock_(header, required) {
+    const out = {};
+    for (let i = 0; i < header.length; i++) {
+      out[String(header[i] || '').trim()] = i;
+    }
+
+    for (let j = 0; j < required.length; j++) {
+      if (out[required[j]] === undefined) {
+        throw new Error(ERROR.BAD_REQUEST + ': Missing lock column ' + required[j]);
+      }
+    }
+
+    return out;
+  }
+
+  function parseJsonSafe_(raw) {
+    const value = String(raw || '').trim();
+    if (!value) return null;
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function numberOrZero_(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
   }
 
   function validateBalancesExist_(lines) {
