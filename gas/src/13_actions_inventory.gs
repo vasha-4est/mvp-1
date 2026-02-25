@@ -2,7 +2,7 @@
 
 (function initInventoryActions_(){
   const SERVICE_TIMEZONE = 'Europe/Moscow';
-  const LOCK_WAIT_MS = 30000;
+  const LOCK_TRY_MS = 50;
   const WEBAPP_SOURCE = 'webapp';
 
   Actions_.register_('inventory.balance.get', (ctx) => {
@@ -197,10 +197,8 @@
 
   function withLock_(fn) {
     const lock = LockService.getScriptLock();
-    try {
-      lock.waitLock(LOCK_WAIT_MS);
-    } catch (_e) {
-      throw new Error(ERROR.LOCK_CONFLICT + ': lock timeout after ' + LOCK_WAIT_MS + 'ms');
+    if (!lock.tryLock(LOCK_TRY_MS)) {
+      throw new Error(ERROR.LOCK_CONFLICT + ': Inventory entity is locked');
     }
 
     try {
