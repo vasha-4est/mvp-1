@@ -132,10 +132,20 @@
     if (!locationId) throw new Error(ERROR.BAD_REQUEST + ': missing location_id');
     if (!Number.isFinite(qty) || qty <= 0) throw new Error(ERROR.BAD_REQUEST + ': qty must be > 0');
 
+    const action = 'inventory.reserve';
+    const operationId = operationId_(ctx.requestId, 'RSV');
+
     return withInventoryBalanceLock_(ctx, skuId, locationId, () => {
-      const replayReservationId = replayEventEntityId_(ctx.requestId, 'inventory_reserved');
-      if (idempExists_(ctx.requestId, 'inventory.reserve')) {
-        return { ok: true, replayed: true, reservation_id: replayReservationId, sku_id: skuId, location_id: locationId, qty };
+      if (idempExists_(ctx.requestId, action)) {
+        return {
+          ok: true,
+          replayed: true,
+          reservation_id: operationId,
+          operation_id: operationId,
+          sku_id: skuId,
+          location_id: locationId,
+          qty,
+        };
       }
 
       const updatedAt = nowIso_();
@@ -143,20 +153,35 @@
       if (!row) throw new Error(ERROR.NOT_FOUND + ': SKU_NOT_FOUND');
       if (row.availableQty < qty) throw new Error(ERROR.INSUFFICIENT_AVAILABLE + ': insufficient available_qty');
 
-      updateBalanceRow_(row, row.onHandQty, row.reservedQty + qty, updatedAt);
+      const nextReservedQty = row.reservedQty + qty;
+      const nextVersionId = updateBalanceRow_(row, row.onHandQty, nextReservedQty, updatedAt);
+      const nextAvailableQty = row.onHandQty - nextReservedQty;
 
-      const reservationId = nextInventoryOpId_(updatedAt, 'RSV');
       appendEvent_('inventory_reserved', 'inventory_balance', skuId + '::' + locationId, {
-        reservation_id: reservationId,
+        operation_id: operationId,
+        reservation_id: operationId,
         sku_id: skuId,
         location_id: locationId,
         qty,
+        reserved_qty: nextReservedQty,
+        available_qty: nextAvailableQty,
+        version_id: nextVersionId,
         reason,
         proof_ref: proofRef,
       }, updatedAt, ctx);
 
-      markIdempotent_(ctx.requestId, 'inventory.reserve');
-      return { ok: true, reservation_id: reservationId, sku_id: skuId, location_id: locationId, qty };
+      markIdempotent_(ctx.requestId, action, true);
+      return {
+        ok: true,
+        reservation_id: operationId,
+        operation_id: operationId,
+        sku_id: skuId,
+        location_id: locationId,
+        qty,
+        reserved_qty: nextReservedQty,
+        available_qty: nextAvailableQty,
+        version_id: nextVersionId,
+      };
     });
   });
 
@@ -173,10 +198,20 @@
     if (!locationId) throw new Error(ERROR.BAD_REQUEST + ': missing location_id');
     if (!Number.isFinite(qty) || qty <= 0) throw new Error(ERROR.BAD_REQUEST + ': qty must be > 0');
 
+    const action = 'inventory.release';
+    const operationId = operationId_(ctx.requestId, 'REL');
+
     return withInventoryBalanceLock_(ctx, skuId, locationId, () => {
-      const replayReleaseId = replayEventEntityId_(ctx.requestId, 'inventory_released');
-      if (idempExists_(ctx.requestId, 'inventory.release')) {
-        return { ok: true, replayed: true, release_id: replayReleaseId, sku_id: skuId, location_id: locationId, qty };
+      if (idempExists_(ctx.requestId, action)) {
+        return {
+          ok: true,
+          replayed: true,
+          release_id: operationId,
+          operation_id: operationId,
+          sku_id: skuId,
+          location_id: locationId,
+          qty,
+        };
       }
 
       const updatedAt = nowIso_();
@@ -184,20 +219,35 @@
       if (!row) throw new Error(ERROR.NOT_FOUND + ': SKU_NOT_FOUND');
       if (row.reservedQty < qty) throw new Error(ERROR.INSUFFICIENT_RESERVED + ': insufficient reserved_qty');
 
-      updateBalanceRow_(row, row.onHandQty, row.reservedQty - qty, updatedAt);
+      const nextReservedQty = row.reservedQty - qty;
+      const nextVersionId = updateBalanceRow_(row, row.onHandQty, nextReservedQty, updatedAt);
+      const nextAvailableQty = row.onHandQty - nextReservedQty;
 
-      const releaseId = nextInventoryOpId_(updatedAt, 'REL');
       appendEvent_('inventory_released', 'inventory_balance', skuId + '::' + locationId, {
-        release_id: releaseId,
+        operation_id: operationId,
+        release_id: operationId,
         sku_id: skuId,
         location_id: locationId,
         qty,
+        reserved_qty: nextReservedQty,
+        available_qty: nextAvailableQty,
+        version_id: nextVersionId,
         reason,
         proof_ref: proofRef,
       }, updatedAt, ctx);
 
-      markIdempotent_(ctx.requestId, 'inventory.release');
-      return { ok: true, release_id: releaseId, sku_id: skuId, location_id: locationId, qty };
+      markIdempotent_(ctx.requestId, action, true);
+      return {
+        ok: true,
+        release_id: operationId,
+        operation_id: operationId,
+        sku_id: skuId,
+        location_id: locationId,
+        qty,
+        reserved_qty: nextReservedQty,
+        available_qty: nextAvailableQty,
+        version_id: nextVersionId,
+      };
     });
   });
 
@@ -276,7 +326,7 @@
   }
 
   function withInventoryBalanceLock_(ctx, skuId, locationId, fn) {
-    return withEntitySheetLock_(ctx, 'inventory_balance', skuId + '::' + locationId, fn);
+    return withEntitySheetLock_(ctx, 'inventory_balance', skuId + ':' + locationId, fn);
   }
 
   function withEntitySheetLock_(ctx, entityType, entityId, fn) {
@@ -360,8 +410,8 @@
     return rows.length > 0;
   }
 
-  function markIdempotent_(requestId, action) {
-    if (idempExists_(requestId, action)) return;
+  function markIdempotent_(requestId, action, assumeMissing) {
+    if (!assumeMissing && idempExists_(requestId, action)) return;
     Db_.append_(SHEET.IDEMP, {
       request_id: str_(requestId),
       action,
@@ -370,19 +420,16 @@
   }
 
   function replayMoveId_(requestId) {
-    return replayEventEntityId_(requestId, 'inventory_move');
-  }
-
-  function replayEventEntityId_(requestId, eventType) {
     const req = str_(requestId);
     if (!req) return '';
-    const rows = Db_.query_(SHEET.EVENTS, (row) => str_(row.request_id) === req && str_(row.event_type) === eventType);
+    const rows = Db_.query_(SHEET.EVENTS, (row) => str_(row.request_id) === req && str_(row.event_type) === 'inventory_move');
     if (rows.length === 0) return '';
-    const payload = jsonObj_(rows[0].payload_json);
-    if (eventType === 'inventory_move') return str_(rows[0].entity_id);
-    if (eventType === 'inventory_reserved') return str_(payload.reservation_id);
-    if (eventType === 'inventory_released') return str_(payload.release_id);
     return str_(rows[0].entity_id);
+  }
+
+  function operationId_(requestId, prefix) {
+    const clean = str_(requestId).replace(/[^A-Za-z0-9]/g, '').slice(0, 20).toUpperCase();
+    return prefix + '-' + (clean || 'REQUEST');
   }
 
   function readBalanceRow_(skuId, locationId) {
@@ -431,6 +478,7 @@
     out[row.idx.version_id] = nextVersion;
     out[row.idx.updated_at] = updatedAt;
     sheet.getRange(row.rowNumber, 1, 1, row.header.length).setValues([out]);
+    return nextVersion;
   }
 
   function appendEvent_(eventType, entityType, entityId, payload, createdAt, ctx) {
@@ -474,30 +522,6 @@
     return prefix + String(maxSeq + 1).padStart(3, '0');
   }
 
-  function nextInventoryOpId_(isoTs, codePrefix) {
-    const sheet = Sys_.sheet_(SHEET.EVENTS);
-    const lastRow = sheet.getLastRow();
-    const header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
-    const idx = index_(header, ['payload_json']);
-
-    const dateKey = Utilities.formatDate(new Date(isoTs), SERVICE_TIMEZONE, 'yyMMdd');
-    const prefix = codePrefix + '-' + dateKey + '-';
-    let maxSeq = 0;
-
-    if (lastRow >= 2) {
-      const values = sheet.getRange(2, 1, lastRow - 1, header.length).getValues();
-      for (let i = 0; i < values.length; i++) {
-        const payload = jsonObj_(values[i][idx.payload_json]);
-        const eventId = codePrefix === 'RSV' ? str_(payload.reservation_id) : str_(payload.release_id);
-        if (eventId.indexOf(prefix) !== 0) continue;
-        const seq = Number(eventId.slice(prefix.length));
-        if (Number.isFinite(seq) && seq > maxSeq) maxSeq = seq;
-      }
-    }
-
-    return prefix + String(maxSeq + 1).padStart(3, '0');
-  }
-
   function actorUserId_(ctx) {
     return ctx && ctx.actor && ctx.actor.employee_id ? str_(ctx.actor.employee_id) : '';
   }
@@ -519,16 +543,6 @@
     }
 
     return out;
-  }
-
-  function jsonObj_(value) {
-    try {
-      const parsed = JSON.parse(str_(value) || '{}');
-      if (parsed && typeof parsed === 'object') return parsed;
-      return {};
-    } catch (err) {
-      return {};
-    }
   }
 
   function str_(value) {

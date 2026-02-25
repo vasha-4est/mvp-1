@@ -8,7 +8,7 @@ import { requireRole } from "@/lib/server/guards";
 
 type Body = { sku_id?: unknown; location_id?: unknown; qty?: unknown; reason?: unknown; proof_ref?: unknown };
 
-type ReleaseResp = { release_id?: unknown; replayed?: unknown };
+type ReleaseResp = { release_id?: unknown; operation_id?: unknown; reserved_qty?: unknown; available_qty?: unknown; version_id?: unknown; replayed?: unknown };
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status, headers: { [REQUEST_ID_HEADER]: requestId } });
@@ -59,8 +59,12 @@ export async function POST(request: Request) {
     ok: true,
     ...(gas.data.replayed === true ? { replayed: true } : {}),
     release_id: typeof gas.data.release_id === "string" ? gas.data.release_id : "",
+    operation_id: typeof gas.data.operation_id === "string" ? gas.data.operation_id : "",
     sku_id: skuId,
     location_id: locationId,
     qty,
+    reserved_qty: typeof gas.data.reserved_qty === "number" ? gas.data.reserved_qty : null,
+    available_qty: typeof gas.data.available_qty === "number" ? gas.data.available_qty : null,
+    version_id: typeof gas.data.version_id === "string" ? gas.data.version_id : "",
   });
 }
