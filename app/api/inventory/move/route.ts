@@ -33,7 +33,7 @@ function qtyNum(value: unknown): number | null {
 function mapError(requestId: string, raw: unknown) {
   const parsed = parseErrorPayload(raw);
   if (parsed.code === "FLAG_DISABLED") return json(requestId, 503, { ok: false, code: "FLAG_DISABLED" });
-  if (parsed.code === "LOCK_CONFLICT") return json(requestId, 409, { ok: false, code: "LOCK_CONFLICT" });
+  if (parsed.code === "LOCK_CONFLICT") return json(requestId, 409, { ok: false, code: "LOCK_CONFLICT", error: parsed.error });
   if (parsed.code === "INSUFFICIENT_STOCK") return json(requestId, 409, { ok: false, code: "INSUFFICIENT_STOCK" });
   if (parsed.code === "NOT_FOUND") return json(requestId, 404, { ok: false, code: "SKU_NOT_FOUND" });
   if (parsed.code === "BAD_REQUEST") return json(requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: parsed.error });

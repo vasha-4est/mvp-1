@@ -2,7 +2,7 @@
 
 (function initInventoryActions_(){
   const SERVICE_TIMEZONE = 'Europe/Moscow';
-  const LOCK_TRY_MS = 50;
+  const ENTITY_LOCK_TTL_SEC = 30;
   const WEBAPP_SOURCE = 'webapp';
 
   Actions_.register_('inventory.balance.get', (ctx) => {
@@ -47,7 +47,7 @@
     if (fromLocationId === toLocationId) throw new Error(ERROR.BAD_REQUEST + ': from_location_id must differ from to_location_id');
     if (!Number.isFinite(qty) || qty <= 0) throw new Error(ERROR.BAD_REQUEST + ': qty must be > 0');
 
-    return withLock_(() => {
+    return withInventoryMoveLock_(ctx, skuId, fromLocationId, () => {
       const replayMoveId = replayMoveId_(ctx.requestId);
       if (idempExists_(ctx.requestId, 'inventory.move')) {
         return {
@@ -195,9 +195,83 @@
     });
   });
 
+  function withInventoryMoveLock_(ctx, skuId, fromLocationId, fn) {
+    const lockKey = 'inventory:' + skuId + ':' + fromLocationId;
+    const now = new Date();
+    const acquiredAt = now.toISOString();
+    const expiresAt = new Date(now.getTime() + ENTITY_LOCK_TTL_SEC * 1000).toISOString();
+    const lockSheet = Sys_.sheet_('locks');
+    const lockHeader = lockSheet.getRange(1, 1, 1, lockSheet.getLastColumn()).getValues()[0].map(String);
+    const lockIdx = index_(lockHeader, [
+      'lock_key',
+      'entity_type',
+      'entity_id',
+      'held_by_user_id',
+      'held_by_role_id',
+      'acquired_at',
+      'expires_at',
+      'status',
+    ]);
+
+    const lastRow = lockSheet.getLastRow();
+    if (lastRow >= 2) {
+      const lockRows = lockSheet.getRange(2, 1, lastRow - 1, lockHeader.length).getValues();
+      const toDelete = [];
+
+      for (let i = 0; i < lockRows.length; i++) {
+        if (str_(lockRows[i][lockIdx.lock_key]) !== lockKey) continue;
+
+        const expiresAtValue = new Date(str_(lockRows[i][lockIdx.expires_at]));
+        const isExpired = Number.isFinite(expiresAtValue.getTime()) && expiresAtValue.getTime() < now.getTime();
+        if (isExpired) {
+          toDelete.push(i + 2);
+          continue;
+        }
+
+        const status = str_(lockRows[i][lockIdx.status]);
+        if (status === 'active') {
+          throw new Error(ERROR.LOCK_CONFLICT + ': Inventory entity is locked');
+        }
+      }
+
+      for (let j = toDelete.length - 1; j >= 0; j--) {
+        lockSheet.deleteRow(toDelete[j]);
+      }
+    }
+
+    lockSheet.appendRow(lockHeader.map((columnName) => {
+      if (columnName === 'lock_key') return lockKey;
+      if (columnName === 'entity_type') return 'inventory';
+      if (columnName === 'entity_id') return skuId + '|' + fromLocationId;
+      if (columnName === 'held_by_user_id') return actorUserId_(ctx) || 'system';
+      if (columnName === 'held_by_role_id') return actorRoleId_(ctx);
+      if (columnName === 'acquired_at') return acquiredAt;
+      if (columnName === 'expires_at') return expiresAt;
+      if (columnName === 'status') return 'active';
+      return '';
+    }));
+
+    try {
+      return fn();
+    } finally {
+      const currentLastRow = lockSheet.getLastRow();
+      if (currentLastRow < 2) return;
+
+      const rows = lockSheet.getRange(2, 1, currentLastRow - 1, lockHeader.length).getValues();
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const rowLockKey = str_(rows[i][lockIdx.lock_key]);
+        const rowAcquiredAt = str_(rows[i][lockIdx.acquired_at]);
+        if (rowLockKey === lockKey && rowAcquiredAt === acquiredAt) {
+          lockSheet.deleteRow(i + 2);
+          break;
+        }
+      }
+    }
+  }
+
   function withLock_(fn) {
     const lock = LockService.getScriptLock();
-    if (!lock.tryLock(LOCK_TRY_MS)) {
+    if (!lock.tryLock(50)) {
       throw new Error(ERROR.LOCK_CONFLICT + ': Inventory entity is locked');
     }
 
