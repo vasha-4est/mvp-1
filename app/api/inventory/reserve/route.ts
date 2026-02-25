@@ -8,7 +8,7 @@ import { requireRole } from "@/lib/server/guards";
 
 type Body = { sku_id?: unknown; location_id?: unknown; qty?: unknown; reason?: unknown; proof_ref?: unknown };
 
-type ReserveResp = { replayed?: unknown };
+type ReserveResp = { reservation_id?: unknown; operation_id?: unknown; reserved_qty?: unknown; available_qty?: unknown; version_id?: unknown; replayed?: unknown };
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status, headers: { [REQUEST_ID_HEADER]: requestId } });
@@ -22,9 +22,9 @@ function qtyNum(v: unknown): number | null {
 
 function mapError(requestId: string, raw: unknown) {
   const parsed = parseErrorPayload(raw);
-  if (parsed.code === "FLAG_DISABLED") return json(requestId, 503, { ok: false, code: "FLAG_DISABLED" });
+  if (parsed.code === "FLAG_DISABLED") return json(requestId, 400, { ok: false, code: "FLAG_DISABLED" });
   if (parsed.code === "LOCK_CONFLICT") return json(requestId, 409, { ok: false, code: "LOCK_CONFLICT" });
-  if (parsed.code === "INSUFFICIENT_STOCK") return json(requestId, 409, { ok: false, code: "INSUFFICIENT_STOCK" });
+  if (parsed.code === "INSUFFICIENT_AVAILABLE") return json(requestId, 409, { ok: false, code: "INSUFFICIENT_AVAILABLE" });
   if (parsed.code === "NOT_FOUND") return json(requestId, 404, { ok: false, code: "SKU_NOT_FOUND" });
   if (parsed.code === "BAD_REQUEST") return json(requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: parsed.error });
   return json(requestId, 502, { ok: false, code: parsed.code, error: parsed.error });
@@ -52,8 +52,19 @@ export async function POST(request: Request) {
     return json(auth.requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: "Invalid reserve payload" });
   }
 
-  const gas = await callGas<ReserveResp>("inventory.reserve.create", { sku_id: skuId, location_id: locationId, qty, reason, proof_ref: proofRef }, auth.requestId);
+  const gas = await callGas<ReserveResp>("inventory.reserve", { sku_id: skuId, location_id: locationId, qty, reason, proof_ref: proofRef }, auth.requestId);
   if (!gas.ok || !gas.data) return mapError(auth.requestId, (gas as { error?: unknown }).error);
 
-  return json(auth.requestId, 200, { ok: true, ...(gas.data.replayed === true ? { replayed: true } : {}), sku_id: skuId, location_id: locationId, qty });
+  return json(auth.requestId, 200, {
+    ok: true,
+    ...(gas.data.replayed === true ? { replayed: true } : {}),
+    reservation_id: typeof gas.data.reservation_id === "string" ? gas.data.reservation_id : "",
+    operation_id: typeof gas.data.operation_id === "string" ? gas.data.operation_id : "",
+    sku_id: skuId,
+    location_id: locationId,
+    qty,
+    reserved_qty: typeof gas.data.reserved_qty === "number" ? gas.data.reserved_qty : null,
+    available_qty: typeof gas.data.available_qty === "number" ? gas.data.available_qty : null,
+    version_id: typeof gas.data.version_id === "string" ? gas.data.version_id : "",
+  });
 }
