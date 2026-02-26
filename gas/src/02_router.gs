@@ -154,6 +154,7 @@ function parseErrorFromMessage_(message) {
     ILLEGAL_TRANSITION: true,
     IDEMPOTENCY_KEY_REUSE: true,
     NOT_FOUND: true,
+    FORBIDDEN: true,
     FLAG_DISABLED: true,
     LOCK_CONFLICT: true,
     INSUFFICIENT_STOCK: true,
