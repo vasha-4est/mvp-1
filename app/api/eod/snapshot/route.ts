@@ -16,6 +16,7 @@ type UpstreamAttemptError = {
   error?: string;
   ms?: number;
   rid?: string;
+  action?: string;
 };
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
@@ -60,8 +61,8 @@ function ensureNonEmptyCoreDetails(details: unknown): UpstreamAttemptError[] {
   if (cores.length > 0) return cores;
 
   const fallback = [
-    { key: "daily_summary", status: 502, code: "BAD_GATEWAY", error: "core result missing" },
-    { key: "control_tower", status: 502, code: "BAD_GATEWAY", error: "core result missing" },
+    { key: "daily_summary", status: 502, code: "BAD_GATEWAY", error: "no core attempt recorded", action: "daily.summary.get" },
+    { key: "control_tower", status: 502, code: "BAD_GATEWAY", error: "no core attempt recorded", action: "control_tower.read" },
   ];
   return fallback;
 }
@@ -153,19 +154,15 @@ export async function POST(request: Request) {
   const auth = requireAnyRole(request, ["OWNER", "COO"]);
   if (auth.ok === false) return auth.response;
 
-  let body: { date?: unknown; tz?: unknown; days_window?: unknown };
+  let body: { date?: unknown; tz?: unknown; days_window?: unknown } = {};
   try {
     body = (await request.json()) as { date?: unknown; tz?: unknown; days_window?: unknown };
   } catch {
-    return json(auth.requestId, 400, {
-      ok: false,
-      code: "BAD_REQUEST",
-      error: "Invalid JSON body",
-      request_id: auth.requestId,
-    });
+    body = {};
   }
 
-  const date = str(body.date);
+  const { searchParams } = new URL(request.url);
+  const date = str(body.date) || str(searchParams.get("date"));
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return json(auth.requestId, 400, {
       ok: false,
@@ -175,8 +172,8 @@ export async function POST(request: Request) {
     });
   }
 
-  const tz = str(body.tz) || DEFAULT_TZ;
-  const daysWindow = intOrDefault(body.days_window, 1);
+  const tz = str(body.tz) || str(searchParams.get("tz")) || DEFAULT_TZ;
+  const daysWindow = intOrDefault(body.days_window ?? searchParams.get("days_window"), 1);
   const result = await upsertWithRetry(auth.requestId, {
     date,
     tz,

@@ -260,6 +260,22 @@
           actor: parentCtx && parentCtx.actor ? parentCtx.actor : { role_id: ROLE.OWNER },
           flags: parentCtx && parentCtx.flags ? parentCtx.flags : Flags_.load_(),
         });
+        if (data === null || data === undefined) {
+          return {
+            ok: false,
+            key: key,
+            action: action,
+            status: 502,
+            code: 'BAD_GATEWAY',
+            error: 'dispatch returned null or undefined',
+            ms: new Date().getTime() - started,
+            rid: rid,
+            data: null,
+            attempts: i + 1,
+            isCore: isCore,
+          };
+        }
+
         return {
           ok: true,
           key: key,
@@ -349,6 +365,8 @@
     });
 
     return {
+      date: snapshotDate,
+      tz: tz,
       headline: {
         deficit_total_missing_qty: deficitTotalMissingQty,
         picking_confirmed_events: pickingConfirmedEvents,
@@ -386,6 +404,8 @@
       snapshot_id: asString_(row.snapshot_id),
       details: buildResponseDetails_(snapshotPayload),
       snapshot: snapshotPayload || {
+        date: asString_(row.snapshot_date),
+        tz: asString_(row.tz),
         headline: {
           deficit_total_missing_qty: 0,
           picking_confirmed_events: 0,
@@ -444,6 +464,7 @@
       error: asString_(source && source.error),
       ms: num_(source && source.ms),
       rid: asString_(source && source.rid),
+      action: asString_(source && source.action),
     };
   }
 
@@ -575,6 +596,7 @@
         error: asString_(item.error) || 'source failed',
         ms: num_(item.ms),
         rid: asString_(item.rid),
+        action: asString_(item.action),
       });
     }
 
@@ -590,6 +612,7 @@
       error: asString_(source && source.error) || 'source unavailable',
       ms: num_(source && source.ms),
       rid: asString_(source && source.rid),
+      action: asString_(source && source.action),
     };
   }
 

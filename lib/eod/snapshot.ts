@@ -10,7 +10,7 @@ export type EodSnapshotPayload = {
   replayed: boolean;
   snapshot_id: string;
   details?: {
-    cores?: Array<{ key?: string; status?: number; code?: string; error?: string; ms?: number; rid?: string }>;
+    cores?: Array<{ key?: string; status?: number; code?: string; error?: string; ms?: number; rid?: string; action?: string }>;
     selected_core_keys?: string[];
     disabled_reasons?: string[];
     evaluated_flags?: Record<string, unknown>;
@@ -39,12 +39,14 @@ export type EodSnapshotPayload = {
       };
       risk_flags: string[];
     };
+    date?: string;
+    tz?: string;
     notes: string;
     sections?: {
       daily_summary?: Record<string, unknown> | null;
       control_tower?: Record<string, unknown> | null;
     };
-    errors?: Array<{ key: string; status: number; code: string; error: string; ms?: number; rid?: string }>;
+    errors?: Array<{ key: string; status: number; code: string; error: string; ms?: number; rid?: string; action?: string }>;
   };
 };
 
