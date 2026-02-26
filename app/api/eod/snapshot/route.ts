@@ -7,6 +7,16 @@ import { requireAnyRole } from "@/lib/server/guards";
 
 const DEFAULT_TZ = "Europe/Moscow";
 const RETRY_BACKOFF_MS = [800, 1400, 2200];
+const CORE_OUTAGE_ERROR = "core EOD sources unavailable";
+
+type UpstreamAttemptError = {
+  key?: string;
+  status?: number;
+  code?: string;
+  error?: string;
+  ms?: number;
+  rid?: string;
+};
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status, headers: { [REQUEST_ID_HEADER]: requestId } });
@@ -26,6 +36,22 @@ function isTransientGatewayFailure(code: string, error: string): boolean {
   if (code === "BAD_GATEWAY") return true;
   const normalized = error.toLowerCase();
   return normalized.includes("timed out") || normalized.includes("timeout");
+}
+
+function isCoreOutageError(code: string, error: string): boolean {
+  return code === "BAD_GATEWAY" || error.toLowerCase().includes(CORE_OUTAGE_ERROR.toLowerCase());
+}
+
+function asAttemptError(value: unknown): UpstreamAttemptError | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as UpstreamAttemptError;
+}
+
+function extractCoreDetails(details: unknown): UpstreamAttemptError[] {
+  if (!details || typeof details !== "object" || Array.isArray(details)) return [];
+  const cores = (details as { cores?: unknown }).cores;
+  if (!Array.isArray(cores)) return [];
+  return cores.map(asAttemptError).filter((item): item is UpstreamAttemptError => item !== null);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -64,6 +90,19 @@ async function upsertWithRetry(requestId: string, payload: { date: string; tz: s
       };
     }
 
+    // Core-source outages are upstream failures, never BAD_REQUEST.
+    if (isCoreOutageError(created.code, created.error)) {
+      return {
+        ok: false as const,
+        error: {
+          ...created,
+          code: "BAD_GATEWAY",
+          error: CORE_OUTAGE_ERROR,
+        },
+        attempts,
+      };
+    }
+
     if (!isTransientGatewayFailure(created.code, created.error) || index === RETRY_BACKOFF_MS.length) {
       return {
         ok: false as const,
@@ -72,7 +111,6 @@ async function upsertWithRetry(requestId: string, payload: { date: string; tz: s
       };
     }
 
-    // Retry transient 502/timeout upstream failures with bounded backoff.
     await sleep(RETRY_BACKOFF_MS[index]);
   }
 
@@ -118,6 +156,22 @@ export async function POST(request: Request) {
   });
 
   if (result.ok === false) {
+    if (isCoreOutageError(result.error.code, result.error.error)) {
+      const cores = extractCoreDetails(result.error.details);
+      return json(auth.requestId, 502, {
+        ok: false,
+        code: "BAD_GATEWAY",
+        error: CORE_OUTAGE_ERROR,
+        request_id: auth.requestId,
+        details: {
+          date,
+          tz,
+          attempts: result.attempts,
+          cores,
+        },
+      });
+    }
+
     const isTransient = isTransientGatewayFailure(result.error.code, result.error.error);
     if (isTransient) {
       return json(auth.requestId, 502, {
@@ -138,7 +192,10 @@ export async function POST(request: Request) {
     });
   }
 
-  return json(auth.requestId, result.status, result.data);
+  return json(auth.requestId, result.status, {
+    ...result.data,
+    request_id: auth.requestId,
+  });
 }
 
 export async function GET(request: Request) {
@@ -173,5 +230,6 @@ export async function GET(request: Request) {
   return json(auth.requestId, 200, {
     ...result.data,
     date: result.data.snapshot_date,
+    request_id: auth.requestId,
   });
 }

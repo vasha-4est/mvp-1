@@ -34,7 +34,11 @@ export type EodSnapshotPayload = {
       risk_flags: string[];
     };
     notes: string;
-    errors?: Array<{ source: string; code: string; error: string }>;
+    sections?: {
+      daily_summary?: Record<string, unknown> | null;
+      control_tower?: Record<string, unknown> | null;
+    };
+    errors?: Array<{ key: string; status: number; code: string; error: string; ms?: number; rid?: string }>;
   };
 };
 

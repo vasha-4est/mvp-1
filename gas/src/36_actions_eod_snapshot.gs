@@ -25,22 +25,29 @@
         return buildResponse_(existing.row, existingPayload, true);
       }
 
-      const daily = tryAction_('daily.summary.get', {
+      const daily = executeSource_('daily_summary', 'daily.summary.get', {
         days: Math.max(1, daysWindow),
         tz: tz,
-      });
-      const tower = tryAction_('control_tower.read', {});
-      const throughput = tryAction_('kpi.throughput.get', { days: 1 });
-      const throughputShifts = tryAction_('kpi.throughput.shifts.get', { days: 1, tz: tz });
-      const shipmentSla = tryAction_('kpi.shipment.sla.get', { days: 1, tz: tz, sla_hours: 24 });
+      }, true);
+      const tower = executeSource_('control_tower', 'control_tower.read', {}, true);
+      const throughput = executeSource_('throughput', 'kpi.throughput.get', { days: 1 }, false);
+      const throughputShifts = executeSource_('throughput_shifts', 'kpi.throughput.shifts.get', { days: 1, tz: tz }, false);
+      const shipmentSla = executeSource_('shipment_sla', 'kpi.shipment.sla.get', { days: 1, tz: tz, sla_hours: 24 }, false);
 
       if (!daily.ok && !tower.ok) {
-        throw new Error(ERROR.BAD_GATEWAY + ': core EOD sources unavailable');
+        throw new Error(
+          ERROR.BAD_GATEWAY + ': core EOD sources unavailable | ' + JSON.stringify({
+            date: snapshotDate,
+            tz: tz,
+            attempts: Math.max(num_(daily.attempts), num_(tower.attempts)),
+            cores: [toErrorCore_(daily), toErrorCore_(tower)],
+          })
+        );
       }
 
-      const summary = buildSnapshot_(snapshotDate, tz, daily.data, tower.data, {
-        dailyOk: daily.ok,
-        towerOk: tower.ok,
+      const summary = buildSnapshot_(snapshotDate, tz, {
+        daily: daily,
+        tower: tower,
         optional: [throughput, throughputShifts, shipmentSla],
       });
 
@@ -179,20 +186,65 @@
     }
   }
 
-  function tryAction_(action, payload) {
-    try {
-      const data = Dispatch_.run_(action, payload || {}, {
-        role_id: ROLE.OWNER,
-        request_id: 'eod-internal-' + uuid_(),
-      });
-      return { ok: true, action: action, data: data, code: '', error: '' };
-    } catch (err) {
-      const parsed = parseError_(err);
-      return { ok: false, action: action, data: null, code: parsed.code, error: parsed.error };
+  function executeSource_(key, action, payload, isCore) {
+    const RETRIES = 3;
+    const backoffMs = [300, 700];
+    let last = { ok: false, key: key, action: action, status: 502, code: 'BAD_GATEWAY', error: 'upstream unavailable', ms: 0, rid: '', data: null, attempts: 1, isCore: isCore };
+
+    for (let i = 0; i < RETRIES; i++) {
+      const started = new Date().getTime();
+      const rid = 'eod-src-' + key + '-' + uuid_();
+      try {
+        const data = Dispatch_.run_(action, payload || {}, {
+          role_id: ROLE.OWNER,
+          request_id: rid,
+        });
+        return {
+          ok: true,
+          key: key,
+          action: action,
+          status: 200,
+          code: 'OK',
+          error: '',
+          ms: new Date().getTime() - started,
+          rid: rid,
+          data: data,
+          attempts: i + 1,
+          isCore: isCore,
+        };
+      } catch (err) {
+        const parsed = parseError_(err);
+        last = {
+          ok: false,
+          key: key,
+          action: action,
+          status: parsed.code === 'LOCK_CONFLICT' ? 503 : 502,
+          code: parsed.code || 'BAD_GATEWAY',
+          error: parsed.error || 'upstream unavailable',
+          ms: new Date().getTime() - started,
+          rid: rid,
+          data: null,
+          attempts: i + 1,
+          isCore: isCore,
+        };
+
+        if (!isTransientSourceError_(last.code, last.error) || i === RETRIES - 1) {
+          return last;
+        }
+
+        if (i < backoffMs.length) {
+          Utilities.sleep(backoffMs[i]);
+        }
+      }
     }
+
+    return last;
   }
 
-  function buildSnapshot_(snapshotDate, tz, daily, tower, status) {
+
+  function buildSnapshot_(snapshotDate, tz, sourceStatus) {
+    const daily = sourceStatus.daily && sourceStatus.daily.ok ? sourceStatus.daily.data : null;
+    const tower = sourceStatus.tower && sourceStatus.tower.ok ? sourceStatus.tower.data : null;
     const latestDay = pickDay_(daily, snapshotDate);
 
     const deficitTotalMissingQty = num_(pickPath_(tower, ['sections', 'deficit', 'total_missing_qty']));
@@ -221,9 +273,8 @@
     if (locksActiveTotal >= LOCKS_SPIKE_THRESHOLD) tomorrowLoad.risk_flags.push('LOCKS_SPIKE');
     if (incidentsOpenNow > 0) tomorrowLoad.risk_flags.push('INCIDENTS_OPEN');
     if (shipmentsOpenNow > 0) tomorrowLoad.risk_flags.push('SHIPMENTS_OPEN');
-    if (!status.dailyOk || !status.towerOk) tomorrowLoad.risk_flags.push('DATA_PARTIAL');
-
-    const partialErrors = collectErrors_(status);
+    const partialErrors = collectErrors_(sourceStatus);
+    if (partialErrors.length > 0) tomorrowLoad.risk_flags.push('DATA_PARTIAL');
 
     const notes = buildNotes_({
       snapshotDate: snapshotDate,
@@ -233,7 +284,7 @@
       incidentsOpenNow: incidentsOpenNow,
       shipmentsOpenNow: shipmentsOpenNow,
       locksActiveTotal: locksActiveTotal,
-      partial: !status.dailyOk || !status.towerOk || partialErrors.length > 0,
+      partial: partialErrors.length > 0,
     });
 
     return {
@@ -252,6 +303,10 @@
       },
       tomorrow_load: tomorrowLoad,
       notes: notes,
+      sections: {
+        daily_summary: daily || null,
+        control_tower: tower || null,
+      },
       errors: partialErrors,
     };
   }
@@ -284,7 +339,8 @@
           risk_flags: ['DATA_PARTIAL'],
         },
         notes: 'Snapshot payload is unavailable.',
-        errors: [{ source: 'snapshot', code: 'BAD_GATEWAY', error: 'payload unavailable' }],
+        sections: { daily_summary: null, control_tower: null },
+        errors: [{ key: 'snapshot', status: 502, code: 'BAD_GATEWAY', error: 'payload unavailable' }],
       },
     };
   }
@@ -401,21 +457,45 @@
 
   function collectErrors_(status) {
     const out = [];
-    if (!status.dailyOk) out.push({ source: 'daily.summary.get', code: 'BAD_GATEWAY', error: 'daily.summary unavailable' });
-    if (!status.towerOk) out.push({ source: 'control_tower.read', code: 'BAD_GATEWAY', error: 'control_tower unavailable' });
-
+    const all = [];
+    if (status && status.daily) all.push(status.daily);
+    if (status && status.tower) all.push(status.tower);
     const optional = (status && Array.isArray(status.optional)) ? status.optional : [];
-    for (let i = 0; i < optional.length; i++) {
-      const item = optional[i] || {};
+    for (let i = 0; i < optional.length; i++) all.push(optional[i]);
+
+    for (let j = 0; j < all.length; j++) {
+      const item = all[j] || {};
       if (item.ok) continue;
       out.push({
-        source: asString_(item.action) || 'unknown',
+        key: asString_(item.key) || asString_(item.action) || 'unknown',
+        status: num_(item.status) || 502,
         code: asString_(item.code) || 'BAD_GATEWAY',
-        error: asString_(item.error) || 'optional source failed',
+        error: asString_(item.error) || 'source failed',
+        ms: num_(item.ms),
+        rid: asString_(item.rid),
       });
     }
 
     return out;
+  }
+
+
+  function toErrorCore_(source) {
+    return {
+      key: asString_(source && source.key),
+      status: num_(source && source.status) || 502,
+      code: asString_(source && source.code) || 'BAD_GATEWAY',
+      error: asString_(source && source.error) || 'source unavailable',
+      ms: num_(source && source.ms),
+      rid: asString_(source && source.rid),
+    };
+  }
+
+  function isTransientSourceError_(code, error) {
+    const c = asString_(code);
+    if (c === 'BAD_GATEWAY' || c === 'LOCK_CONFLICT') return true;
+    const normalized = asString_(error).toLowerCase();
+    return normalized.indexOf('timed out') >= 0 || normalized.indexOf('timeout') >= 0;
   }
 
   function parseError_(err) {
