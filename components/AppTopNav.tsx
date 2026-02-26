@@ -20,6 +20,7 @@ const LINKS = [
   { href: "/packaging", label: "Packaging" },
   { href: "/control-tower", label: "Control Tower" },
   { href: "/live-floor", label: "Live Floor" },
+  { href: "/kpi", label: "KPI Dashboard" },
   { href: "/kpi/deficit", label: "Deficit KPI" },
   { href: "/kpi/throughput", label: "Throughput KPI" },
   { href: "/kpi/throughput-shifts", label: "Throughput Shifts KPI" },

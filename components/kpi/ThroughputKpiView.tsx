@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 type ThroughputMetrics = {
   inventory_moves_qty?: number;
@@ -20,15 +21,23 @@ type ThroughputPayload = {
   ok: true;
   generated_at?: string;
   series?: ThroughputSeriesItem[];
+  tz?: string;
 };
 
 type LoadState =
   | { status: "loading" }
   | { status: "ready"; data: ThroughputPayload | null; error: string | null };
 
-const QUERY = "days=14";
+const DEFAULT_DAYS = 14;
+const DEFAULT_TZ = "Europe/Moscow";
 
-function formatDateTime(value: unknown): string {
+function parseDays(raw: string | null): number {
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_DAYS;
+  return parsed;
+}
+
+function formatDateTime(value: unknown, tz: string): string {
   if (typeof value !== "string") return "—";
 
   const parsed = new Date(value);
@@ -37,6 +46,7 @@ function formatDateTime(value: unknown): string {
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
     timeStyle: "short",
+    timeZone: tz,
   }).format(parsed);
 }
 
@@ -45,13 +55,18 @@ function formatNumber(value: unknown): string {
 }
 
 export default function ThroughputKpiView() {
+  const searchParams = useSearchParams();
+  const days = parseDays(searchParams.get("days"));
+  const tz = (searchParams.get("tz") || "").trim() || DEFAULT_TZ;
+  const query = useMemo(() => `days=${encodeURIComponent(String(days))}&tz=${encodeURIComponent(tz)}`, [days, tz]);
+
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
   const loadData = useCallback(async () => {
     setState({ status: "loading" });
 
     try {
-      const response = await fetch(`/api/kpi/throughput?${QUERY}`, {
+      const response = await fetch(`/api/kpi/throughput?${query}`, {
         method: "GET",
         cache: "no-store",
         credentials: "include",
@@ -68,7 +83,7 @@ export default function ThroughputKpiView() {
     } catch {
       setState({ status: "ready", data: null, error: "Could not load throughput data. Please try again." });
     }
-  }, []);
+  }, [query]);
 
   useEffect(() => {
     void loadData();
@@ -89,7 +104,7 @@ export default function ThroughputKpiView() {
         </button>
       </div>
 
-      <p style={{ margin: 0, color: "#6b7280" }}>Last updated: {formatDateTime(data?.generated_at)}</p>
+      <p style={{ margin: 0, color: "#6b7280" }}>Last updated: {formatDateTime(data?.generated_at, data?.tz || tz)}</p>
 
       {state.status === "loading" ? <p style={{ margin: 0, color: "#6b7280" }}>Loading…</p> : null}
 

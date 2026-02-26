@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 type LoadState =
@@ -233,6 +234,26 @@ export function ControlTowerView() {
               ))}
             </ol>
           )}
+        </Section>
+
+        <Section title="KPI quick links">
+          <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6 }}>
+            <li>
+              <Link href="/kpi">KPI Dashboard</Link>
+            </li>
+            <li>
+              <Link href="/kpi/throughput">Throughput (daily)</Link>
+            </li>
+            <li>
+              <Link href="/kpi/throughput-shifts?days=14&tz=Europe%2FMoscow">Throughput by Shifts</Link>
+            </li>
+            <li>
+              <Link href="/kpi/shipment-sla?days=14&tz=Europe%2FMoscow&sla_hours=24">Shipment SLA</Link>
+            </li>
+            <li>
+              <Link href="/kpi/deficit">Deficit</Link>
+            </li>
+          </ul>
         </Section>
       </div>
     </div>
