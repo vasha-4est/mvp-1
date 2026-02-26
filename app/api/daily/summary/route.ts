@@ -37,6 +37,18 @@ function parseDays(raw: string | null): { ok: true; value: number } | { ok: fals
   };
 }
 
+
+function parseTz(raw: string | null): { ok: true; value: string } | { ok: false; error: string; code: string } {
+  if (!raw) return { ok: true, value: "UTC" };
+  const value = raw.trim();
+  if (!value) return { ok: true, value: "UTC" };
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date());
+    return { ok: true, value };
+  } catch {
+    return { ok: false, code: "BAD_REQUEST", error: "Query param 'tz' must be a valid IANA timezone" };
+  }
+}
 export async function GET(request: Request) {
   const auth = requireAnyRole(request, ["OWNER", "COO"]);
   if (auth.ok === false) {
@@ -45,6 +57,7 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const parsedDays = parseDays(searchParams.get("days"));
+  const parsedTz = parseTz(searchParams.get("tz"));
 
   if (parsedDays.ok === false) {
     return json(auth.requestId, 400, {
@@ -54,9 +67,17 @@ export async function GET(request: Request) {
     });
   }
 
+  if (parsedTz.ok === false) {
+    return json(auth.requestId, 400, {
+      ok: false,
+      code: parsedTz.code,
+      error: parsedTz.error,
+    });
+  }
+
   const result = await getDailySummary(auth.requestId, {
     days: parsedDays.value,
-    tz: "UTC",
+    tz: parsedTz.value,
   });
 
   if (result.ok === false) {

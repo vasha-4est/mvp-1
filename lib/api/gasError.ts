@@ -8,16 +8,29 @@ export function parseErrorPayload(rawError: unknown): ParsedGasError {
   if (typeof rawError === "object" && rawError !== null) {
     const obj = rawError as { code?: unknown; message?: unknown; details?: unknown; error?: unknown };
     const code = typeof obj.code === "string" ? obj.code : "BAD_GATEWAY";
-    const message =
+    const messageRaw =
       typeof obj.message === "string"
         ? obj.message
         : typeof obj.error === "string"
           ? obj.error
           : "Bad gateway";
-    const details =
+
+    const [message, detailsFromMessage] = messageRaw.split(" | ");
+    let details =
       typeof obj.details === "object" && obj.details !== null && !Array.isArray(obj.details)
         ? (obj.details as Record<string, unknown>)
         : undefined;
+
+    if (!details && detailsFromMessage) {
+      try {
+        const parsed = JSON.parse(detailsFromMessage);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          details = parsed as Record<string, unknown>;
+        }
+      } catch {
+        details = undefined;
+      }
+    }
 
     return { error: message, code, ...(details ? { details } : {}) };
   }
