@@ -45,6 +45,7 @@ const SHEET = {
   OUTBOX: 'notification_outbox',
   BATCH_EVENTS: 'batch_events',
   LOCKS: 'locks',
+  WORK_ITEMS: 'work_items',
 };
 
 // --- Where each sheet lives
@@ -81,6 +82,7 @@ const SHEET_DB = {
   [SHEET.OUTBOX]: DB.OPS,
   [SHEET.BATCH_EVENTS]: DB.OPS,
   [SHEET.LOCKS]: DB.OPS,
+  [SHEET.WORK_ITEMS]: DB.OPS,
 };
 
 // --- Feature flags
