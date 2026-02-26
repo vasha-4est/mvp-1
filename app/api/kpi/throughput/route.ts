@@ -7,6 +7,7 @@ import { requireAnyRole } from "@/lib/server/guards";
 
 const DEFAULT_DAYS = 14;
 const MAX_DAYS = 60;
+const DEFAULT_TZ = "Europe/Moscow";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, {
@@ -51,7 +52,7 @@ export async function GET(request: Request) {
 
   const result = await getThroughputKpi(auth.requestId, {
     days: daysResult.value,
-    tz: "UTC",
+    tz: (searchParams.get("tz") || "").trim() || DEFAULT_TZ,
   });
 
   if (result.ok === false) {
