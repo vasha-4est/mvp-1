@@ -11,7 +11,8 @@ type Body = {
   from_location_id?: unknown;
   to_location_id?: unknown;
   qty?: unknown;
-  expected_version_id?: unknown;
+  expected_version_id_from?: unknown;
+  expected_version_id_to?: unknown;
   reason?: unknown;
   proof_ref?: unknown;
 };
@@ -72,18 +73,28 @@ export async function POST(request: Request) {
   const reason = str(body.reason);
   const proofRef = str(body.proof_ref);
   const qty = qtyNum(body.qty);
-  const expectedVersionId = versionNum(body.expected_version_id);
+  const expectedVersionFrom = versionNum(body.expected_version_id_from);
+  const expectedVersionTo = versionNum(body.expected_version_id_to);
 
   if (!skuId || !fromLocationId || !toLocationId || fromLocationId === toLocationId || qty === null || qty <= 0 || Math.floor(qty) !== qty) {
     return json(auth.requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: "Invalid inventory move payload" });
   }
-  if (expectedVersionId === null) {
-    return json(auth.requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: "expected_version_id is required" });
+  if (expectedVersionFrom === null) {
+    return json(auth.requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: "expected_version_id_from is required" });
   }
 
   const gas = await callGas<MoveResp>(
     "inventory.move.create",
-    { sku_id: skuId, from_location_id: fromLocationId, to_location_id: toLocationId, qty, expected_version_id: expectedVersionId, reason, proof_ref: proofRef },
+    {
+      sku_id: skuId,
+      from_location_id: fromLocationId,
+      to_location_id: toLocationId,
+      qty,
+      expected_version_id_from: expectedVersionFrom,
+      ...(expectedVersionTo === null ? {} : { expected_version_id_to: expectedVersionTo }),
+      reason,
+      proof_ref: proofRef,
+    },
     auth.requestId
   );
 
