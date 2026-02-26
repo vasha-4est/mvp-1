@@ -1,4 +1,4 @@
-import { callGas } from "@/lib/integrations/gasClient";
+import { callGasRead } from "@/lib/integrations/gasRead";
 
 type MoveItem = {
   move_id: string;
@@ -39,7 +39,7 @@ export async function listInventoryMoves(
   const rawLimit = options?.limit;
   const limit = typeof rawLimit === "number" && Number.isFinite(rawLimit) ? Math.floor(rawLimit) : 50;
 
-  const response = await callGas<MovesResponse>(
+  const response = await callGasRead<MovesResponse>(
     "inventory.moves.list",
     { limit, sku_id: options?.sku_id ?? "" },
     requestId,

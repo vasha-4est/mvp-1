@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { parseErrorPayload } from "@/lib/api/gasError";
-import { callGas } from "@/lib/integrations/gasClient";
+import { callGasRead } from "@/lib/integrations/gasRead";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 
 type FlagsResponse = {
@@ -15,7 +15,7 @@ export async function getFlags(
 ): Promise<
   { ok: true; flags: Record<string, boolean>; updated_at: string } | { ok: false; code: string; error: string }
 > {
-  const response = await callGas<FlagsResponse>("flags.get", {}, requestId);
+  const response = await callGasRead<FlagsResponse>("flags.get", {}, requestId);
   if (!response.ok || !response.data) {
     const parsed = parseErrorPayload(response.error);
     return {

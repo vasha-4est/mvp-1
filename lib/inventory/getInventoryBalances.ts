@@ -1,4 +1,4 @@
-import { callGas } from "@/lib/integrations/gasClient";
+import { callGasRead } from "@/lib/integrations/gasRead";
 
 type BalanceItem = {
   sku_id: string;
@@ -33,7 +33,7 @@ export async function getInventoryBalances(
   requestId: string,
   filters?: { sku_id?: string; location_id?: string }
 ): Promise<InventoryBalancesResult> {
-  const response = await callGas<BalanceResponse>(
+  const response = await callGasRead<BalanceResponse>(
     "inventory.balance.get",
     {
       sku_id: filters?.sku_id ?? "",
