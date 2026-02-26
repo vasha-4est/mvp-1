@@ -25,7 +25,7 @@ export async function GET(request: Request) {
 
   const requestId = auth.requestId;
   const url = new URL(request.url);
-  const pickingListId = url.searchParams.get("picking_list_id")?.trim() ?? "";
+  const pickingListId = url.searchParams.get("list_id")?.trim() ?? url.searchParams.get("picking_list_id")?.trim() ?? "";
 
   const rawLimit = url.searchParams.get("limit");
   const parsedLimit = rawLimit ? Number.parseInt(rawLimit, 10) : 50;

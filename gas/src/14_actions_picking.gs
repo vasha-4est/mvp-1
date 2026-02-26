@@ -207,124 +207,102 @@
     const payload = ctx.payload || {};
     const requestId = String(ctx.requestId || '').trim();
     const pickingListId = String(payload.picking_list_id || '').trim();
-    const lines = Array.isArray(payload.lines) ? payload.lines : [];
-    const notes = String(payload.notes || '').trim();
+    const lineId = String(payload.line_id || '').trim();
+    const qtyDone = Number(payload.qty_done);
+    const shortReason = payload.short_reason === null || payload.short_reason === undefined ? '' : String(payload.short_reason).trim();
+    const proofRef = payload.proof_ref === null || payload.proof_ref === undefined ? '' : String(payload.proof_ref).trim();
     const action = 'picking.confirm';
 
     if (!requestId) throw new Error(ERROR.BAD_REQUEST + ': request_id is required');
     if (!pickingListId) throw new Error(ERROR.BAD_REQUEST + ': picking_list_id is required');
-    if (lines.length === 0) throw new Error(ERROR.BAD_REQUEST + ': lines must not be empty');
-
-    if (idempExists_(requestId, action)) {
-      return replayPickingConfirmResponse_(requestId, pickingListId);
+    if (!lineId) throw new Error(ERROR.BAD_REQUEST + ': line_id is required');
+    if (!Number.isFinite(qtyDone) || qtyDone < 0 || Math.floor(qtyDone) !== qtyDone) {
+      throw new Error(ERROR.BAD_REQUEST + ': qty_done must be an integer >= 0');
     }
 
-    return withEntitySheetLock_(ctx, 'picking_list', pickingListId, () => {
+    if (idempExists_(requestId, action)) {
+      return replayPickingConfirmResponse_(requestId, pickingListId, lineId);
+    }
+
+    const lockEntityId = pickingListId + ':' + lineId;
+    return withEntitySheetLock_(ctx, 'picking_line', lockEntityId, () => {
       const pickingList = Db_.findBy_(SHEET.PICKING_LISTS, 'picking_list_id', pickingListId);
       if (!pickingList) throw new Error(ERROR.NOT_FOUND + ': picking_list_id');
 
-      const listStatus = String(pickingList.status || '').trim().toUpperCase();
-      if (listStatus === 'DONE' || listStatus === 'CANCELLED' || listStatus === 'CLOSED') {
-        throw new Error(ERROR.BAD_REQUEST + ': picking_list is not open');
+      const line = findPickingLine_(pickingListId, lineId);
+      if (!line) throw new Error(ERROR.NOT_FOUND + ': line_id');
+
+      const plannedQty = numberOrZero_(line.planned_qty || line.qty_required);
+      if (!(plannedQty > 0)) {
+        throw new Error(ERROR.BAD_REQUEST + ': planned_qty must be > 0');
       }
 
-      const normalizedLines = normalizeConfirmLines_(lines);
+      if (qtyDone > plannedQty) {
+        throw new Error(ERROR.BAD_REQUEST + ': qty_done cannot exceed planned_qty');
+      }
+
+      const shortQty = plannedQty - qtyDone;
+      if (shortQty > 0 && !shortReason) {
+        throw new Error(ERROR.BAD_REQUEST + ': short_reason is required when qty_done < planned_qty');
+      }
+
       const nowTs = nowIso_();
-      const lineSummaries = [];
-      let totalPickedQty = 0;
-      let totalShortQty = 0;
+      const actorUserId = ctx && ctx.actor && ctx.actor.employee_id ? String(ctx.actor.employee_id).trim() : 'system';
+      const actorRoleId = ctx && ctx.actor && ctx.actor.role ? String(ctx.actor.role).trim() : 'OWNER';
+      const taskStatus = shortQty > 0 ? 'short' : 'done';
 
-      for (let i = 0; i < normalizedLines.length; i++) {
-        const lineInput = normalizedLines[i];
-        const line = findPickingLine_(pickingListId, lineInput.line_id);
-        if (!line) throw new Error(ERROR.NOT_FOUND + ': line_id');
+      const patch = buildConfirmPatch_(line, {
+        qtyDone,
+        shortQty,
+        shortReason,
+        taskStatus,
+        proofRef,
+        nowTs,
+        actorUserId,
+        actorRoleId,
+        requestId,
+      });
 
-        const skuId = String(line.sku_id || '').trim();
-        if (lineInput.sku_id && lineInput.sku_id !== skuId) {
-          throw new Error(ERROR.BAD_REQUEST + ': sku_id mismatch for line_id');
-        }
-
-        const plannedQty = numberOrZero_(line.planned_qty || line.qty_required);
-        if (lineInput.planned_qty !== null && lineInput.planned_qty !== plannedQty) {
-          throw new Error(ERROR.BAD_REQUEST + ': planned_qty mismatch for line_id');
-        }
-
-        const pickedQty = lineInput.picked_qty;
-        if (pickedQty > plannedQty) {
-          throw new Error(ERROR.BAD_REQUEST + ': picked_qty cannot exceed planned_qty');
-        }
-
-        const inferredShortQty = plannedQty - pickedQty;
-        const shortQty = lineInput.short_qty === null ? inferredShortQty : lineInput.short_qty;
-        if (shortQty !== inferredShortQty) {
-          throw new Error(ERROR.BAD_REQUEST + ': short_qty must equal planned_qty - picked_qty');
-        }
-
-        if (shortQty > 0 && !lineInput.short_reason) {
-          throw new Error(ERROR.BAD_REQUEST + ': short_reason is required when short_qty > 0');
-        }
-
-        const patch = buildConfirmPatch_(line, {
-          pickedQty,
-          shortQty,
-          shortReason: lineInput.short_reason,
-          blockedReason: lineInput.blocked_reason,
-          proofRef: lineInput.proof_ref,
-          nowTs,
-          actorUserId: ctx && ctx.actor && ctx.actor.employee_id ? String(ctx.actor.employee_id).trim() : '',
-          actorRoleId: ctx && ctx.actor && ctx.actor.role ? String(ctx.actor.role).trim() : '',
-          requestId,
-        });
-
-        const updateResult = Db_.updateByPk_(SHEET.PICKING_LINES, 'line_id', lineInput.line_id, patch);
-        if (!updateResult.updated) {
-          throw new Error(updateResult.reason || ERROR.BAD_REQUEST);
-        }
-
-        if (shortQty > 0) {
-          const locationId = String(line.location_id || '').trim();
-          if (locationId) {
-            const releaseCtx = withChildRequest_(ctx, requestId + ':line:' + i + ':release', {
-              sku_id: skuId,
-              location_id: locationId,
-              qty: shortQty,
-              reason: 'picking_confirm_short_release',
-              proof_ref: pickingListId + ':' + lineInput.line_id,
-            });
-            Actions_.dispatch_('inventory.release', releaseCtx);
-          }
-        }
-
-        lineSummaries.push({
-          line_id: lineInput.line_id,
-          sku_id: skuId,
-          planned_qty: plannedQty,
-          picked_qty: pickedQty,
-          short_qty: shortQty,
-          short_reason: lineInput.short_reason,
-        });
-        totalPickedQty += pickedQty;
-        totalShortQty += shortQty;
+      const updateResult = Db_.updateByPk_(SHEET.PICKING_LINES, 'line_id', lineId, patch);
+      if (!updateResult.updated) {
+        throw new Error(updateResult.reason || ERROR.BAD_REQUEST);
       }
 
-      appendPickingEvent_(ctx, 'picking_confirmed', 'picking_list', pickingListId, {
+      if (shortQty > 0) {
+        const skuId = String(line.sku_id || '').trim();
+        const locationId = String(line.location_id || '').trim();
+        if (skuId && locationId) {
+          const releaseCtx = withChildRequest_(ctx, requestId + ':release', {
+            sku_id: skuId,
+            location_id: locationId,
+            qty: shortQty,
+            reason: 'picking_confirm_short_release',
+            proof_ref: pickingListId + ':' + lineId,
+          });
+          Actions_.dispatch_('inventory.release', releaseCtx);
+        }
+      }
+
+      appendPickingEvent_(ctx, 'picking_confirmed', 'picking_line', lockEntityId, {
         picking_list_id: pickingListId,
-        confirmed_lines: lineSummaries.length,
-        total_picked_qty: totalPickedQty,
-        total_short_qty: totalShortQty,
-        notes,
-        lines: lineSummaries,
+        line_id: lineId,
+        sku_id: String(line.sku_id || '').trim(),
+        planned_qty: plannedQty,
+        qty_done: qtyDone,
+        short_reason: shortQty > 0 ? shortReason : null,
       }, nowTs);
 
       markIdempotent_(requestId, action, true);
 
       return {
         ok: true,
-        replayed: false,
         picking_list_id: pickingListId,
-        confirmed_lines: lineSummaries.length,
-        total_picked_qty: totalPickedQty,
-        total_short_qty: totalShortQty,
+        line_id: lineId,
+        sku_id: String(line.sku_id || '').trim(),
+        planned_qty: plannedQty,
+        picked_qty: qtyDone,
+        task_status: taskStatus,
+        short_reason: shortQty > 0 ? shortReason : null,
       };
     });
   });
@@ -352,73 +330,15 @@
     return out;
   }
 
-  function normalizeConfirmLines_(lines) {
-    const out = [];
-    const shortReasonAllowed = {
-      OUT_OF_STOCK: true,
-      DAMAGED: true,
-      NOT_FOUND: true,
-      OTHER: true,
-    };
-
-    for (let i = 0; i < lines.length; i++) {
-      const row = lines[i] || {};
-      const lineId = String(row.line_id || row.picking_line_id || '').trim();
-      const skuId = String(row.sku_id || '').trim();
-      const plannedQtyRaw = row.planned_qty;
-      const plannedQty = plannedQtyRaw === undefined || plannedQtyRaw === null ? null : Number(plannedQtyRaw);
-      const pickedQty = Number(row.picked_qty);
-      const shortQtyRaw = row.short_qty;
-      const shortQty = shortQtyRaw === undefined || shortQtyRaw === null ? null : Number(shortQtyRaw);
-      const shortReasonRaw = row.short_reason;
-      const shortReason = typeof shortReasonRaw === 'string' ? shortReasonRaw.trim() : '';
-      const blockedReasonRaw = row.blocked_reason;
-      const blockedReason = typeof blockedReasonRaw === 'string' ? blockedReasonRaw.trim() : '';
-      const proofRefRaw = row.proof_ref;
-      const proofRef = typeof proofRefRaw === 'string' ? proofRefRaw.trim() : '';
-
-      if (!lineId) throw new Error(ERROR.BAD_REQUEST + ': line_id is required');
-      if (!skuId) throw new Error(ERROR.BAD_REQUEST + ': sku_id is required');
-      if (!Number.isFinite(pickedQty) || pickedQty < 0 || Math.floor(pickedQty) !== pickedQty) {
-        throw new Error(ERROR.BAD_REQUEST + ': picked_qty must be an integer >= 0');
-      }
-
-      if (plannedQty !== null && (!Number.isFinite(plannedQty) || plannedQty < 0 || Math.floor(plannedQty) !== plannedQty)) {
-        throw new Error(ERROR.BAD_REQUEST + ': planned_qty must be an integer >= 0');
-      }
-
-      if (shortQty !== null && (!Number.isFinite(shortQty) || shortQty < 0 || Math.floor(shortQty) !== shortQty)) {
-        throw new Error(ERROR.BAD_REQUEST + ': short_qty must be an integer >= 0');
-      }
-
-      if (shortQty !== null && shortQty > 0 && !shortReasonAllowed[shortReason]) {
-        throw new Error(ERROR.BAD_REQUEST + ': short_reason must be one of OUT_OF_STOCK|DAMAGED|NOT_FOUND|OTHER');
-      }
-
-      out.push({
-        line_id: lineId,
-        sku_id: skuId,
-        planned_qty: plannedQty,
-        picked_qty: pickedQty,
-        short_qty: shortQty,
-        short_reason: shortReason,
-        blocked_reason: blockedReason,
-        proof_ref: proofRef,
-      });
-    }
-
-    return out;
-  }
-
   function buildConfirmPatch_(line, input) {
     const patch = {
-      picked_qty: String(input.pickedQty),
-      qty_picked: String(input.pickedQty),
-      qty_done: String(input.pickedQty),
-      qty_blocked: String(input.shortQty > 0 ? input.shortQty : 0),
-      blocked_reason: input.blockedReason || (input.shortQty > 0 ? input.shortReason : ''),
-      task_status: input.shortQty > 0 ? 'blocked' : 'done',
-      status: input.shortQty > 0 ? 'PARTIAL' : 'DONE',
+      picked_qty: String(input.qtyDone),
+      qty_picked: String(input.qtyDone),
+      qty_done: String(input.qtyDone),
+      qty_blocked: String(input.shortQty),
+      blocked_reason: input.shortQty > 0 ? input.shortReason : '',
+      task_status: input.taskStatus,
+      status: input.taskStatus === 'done' ? 'DONE' : 'PARTIAL',
       done_at: input.nowTs,
       done_by_user_id: input.actorUserId,
       done_by_role_id: input.actorRoleId,
@@ -429,7 +349,7 @@
 
     const existingPayload = parseJsonSafe_(line.payload_json);
     const payload = existingPayload && typeof existingPayload === 'object' ? existingPayload : {};
-    payload.short_reason = input.shortReason || '';
+    payload.short_reason = input.shortQty > 0 ? input.shortReason : null;
     payload.short_qty = input.shortQty;
     payload.confirmed_at = input.nowTs;
 
@@ -447,30 +367,44 @@
     return rows.length > 0 ? rows[0] : null;
   }
 
-  function replayPickingConfirmResponse_(requestId, pickingListId) {
+  function replayPickingConfirmResponse_(requestId, pickingListId, lineId) {
     const rows = Db_.query_(SHEET.EVENTS, (row) => {
       return String(row.request_id || '').trim() === String(requestId || '').trim() && String(row.event_type || '').trim() === 'picking_confirmed';
     });
 
     if (rows.length === 0) {
+      const line = findPickingLine_(pickingListId, lineId);
+      const plannedQty = line ? numberOrZero_(line.planned_qty || line.qty_required) : 0;
+      const pickedQty = line ? numberOrZero_(line.picked_qty || line.qty_picked) : 0;
+      const payloadShortReason = line ? parseJsonSafe_(line.payload_json) : null;
+      const shortReason = payloadShortReason && payloadShortReason.short_reason ? String(payloadShortReason.short_reason) : null;
       return {
         ok: true,
         replayed: true,
-        picking_list_id: pickingListId || findPickingListIdByRequest_(requestId),
-        confirmed_lines: 0,
-        total_picked_qty: 0,
-        total_short_qty: 0,
+        picking_list_id: pickingListId,
+        line_id: lineId,
+        sku_id: line ? String(line.sku_id || '').trim() : '',
+        planned_qty: plannedQty,
+        picked_qty: pickedQty,
+        task_status: line && line.task_status ? String(line.task_status) : (plannedQty === pickedQty ? 'done' : 'short'),
+        short_reason: shortReason,
       };
     }
 
-    const payload = parseJsonSafe_(rows[0].payload_json) || {};
+    const event = rows[0];
+    const payload = parseJsonSafe_(event.payload_json) || {};
+    const plannedQty = numberOrZero_(payload.planned_qty);
+    const qtyDone = numberOrZero_(payload.qty_done);
     return {
       ok: true,
       replayed: true,
-      picking_list_id: String(payload.picking_list_id || pickingListId || findPickingListIdByRequest_(requestId)).trim(),
-      confirmed_lines: numberOrZero_(payload.confirmed_lines),
-      total_picked_qty: numberOrZero_(payload.total_picked_qty),
-      total_short_qty: numberOrZero_(payload.total_short_qty),
+      picking_list_id: String(payload.picking_list_id || pickingListId || '').trim(),
+      line_id: String(payload.line_id || lineId || '').trim(),
+      sku_id: String(payload.sku_id || '').trim(),
+      planned_qty: plannedQty,
+      picked_qty: qtyDone,
+      task_status: plannedQty === qtyDone ? 'done' : 'short',
+      short_reason: payload.short_reason ? String(payload.short_reason) : null,
     };
   }
 
