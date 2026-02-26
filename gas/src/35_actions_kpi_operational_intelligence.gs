@@ -3,6 +3,7 @@
   const MAX_DAYS = 60;
   const DEFAULT_TZ = 'Europe/Moscow';
   const DEFAULT_OVERDUE_THRESHOLD_MINUTES = 24 * 60;
+  const DEFAULT_SLA_HOURS = 24;
 
   const DEFAULT_SHIFTS = [
     { key: 'shift_1', title: 'Shift 1', start: '08:00', end: '16:00' },
@@ -315,6 +316,152 @@
     };
   });
 
+  Actions_.register_('kpi.shipment.sla.get', (ctx) => {
+    Validate_.requireFlag_(ctx.flags, FLAG.PHASE_A_CORE);
+
+    const payload = (ctx && ctx.payload) ? ctx.payload : {};
+    const days = normalizeDays_(payload.days);
+    const tz = normalizeTz_(payload.tz);
+    const slaHours = normalizeSlaHours_(payload.sla_hours);
+
+    const dayKeys = buildDayKeys_(days, tz);
+    const fromDate = dayKeys.length ? dayKeys[0] : formatDay_(new Date(), tz);
+    const toDate = dayKeys.length ? dayKeys[dayKeys.length - 1] : fromDate;
+
+    const events = safeReadAll_(SHEET.EVENTS);
+    const shipments = safeReadAll_(SHEET.SHIPMENTS);
+
+    const byDay = {};
+    for (let i = 0; i < dayKeys.length; i++) {
+      byDay[dayKeys[i]] = {
+        shipments_created: 0,
+        shipments_ready: 0,
+        shipments_ready_on_time: 0,
+        shipments_ready_late: 0,
+        shipments_open_now: 0,
+        durations: [],
+      };
+    }
+
+    const createdAtByShipment = {};
+    const readyAtByShipment = {};
+    let skippedMissingCreated = 0;
+
+    for (let i = 0; i < shipments.length; i++) {
+      const row = shipments[i] || {};
+      const shipmentId = asString_(row.shipment_id || row.id);
+      if (!shipmentId) continue;
+
+      const createdAt = parseDate_(row.created_at || row.created_ts || row.created_on || row.ts_created);
+      if (createdAt) {
+        createdAtByShipment[shipmentId] = createdAt;
+      }
+
+      const readyAt = parseDate_(row.ready_at || row.readiness_at || row.ready_timestamp || row.ready_ts || row.closed_at);
+      const readyFlag = isReadyShipment_(row);
+      if (readyAt && readyFlag) {
+        readyAtByShipment[shipmentId] = readyAt;
+      }
+    }
+
+    for (let i = 0; i < events.length; i++) {
+      const row = events[i] || {};
+      const shipmentId = asString_(row.entity_id || row.shipment_id || extractShipmentIdFromPayload_(row.payload_json));
+      if (!shipmentId) continue;
+
+      const occurredAt = parseDate_(row.created_at || row.at || row.ts);
+      if (!occurredAt) continue;
+
+      const eventType = asLower_(row.event_type || row.event_name || row.type);
+      if (!createdAtByShipment[shipmentId] && isShipmentCreatedEvent_(eventType)) {
+        createdAtByShipment[shipmentId] = occurredAt;
+      }
+
+      if (isShipmentReadyEvent_(eventType)) {
+        if (!readyAtByShipment[shipmentId] || occurredAt.getTime() < readyAtByShipment[shipmentId].getTime()) {
+          readyAtByShipment[shipmentId] = occurredAt;
+        }
+      }
+    }
+
+    const shipmentIds = unionKeys_(createdAtByShipment, readyAtByShipment);
+    for (let i = 0; i < shipmentIds.length; i++) {
+      const shipmentId = shipmentIds[i];
+      const createdAt = createdAtByShipment[shipmentId] || null;
+      if (!createdAt) {
+        skippedMissingCreated += 1;
+        continue;
+      }
+
+      const dayKey = formatDay_(createdAt, tz);
+      const bucket = byDay[dayKey];
+      if (!bucket) continue;
+
+      bucket.shipments_created += 1;
+
+      const readyAt = readyAtByShipment[shipmentId] || null;
+      if (!readyAt || readyAt.getTime() < createdAt.getTime()) {
+        bucket.shipments_open_now += 1;
+        continue;
+      }
+
+      const readyHours = Math.max(0, (readyAt.getTime() - createdAt.getTime()) / (60 * 60 * 1000));
+      bucket.shipments_ready += 1;
+      bucket.durations.push(readyHours);
+
+      if (readyHours <= slaHours) {
+        bucket.shipments_ready_on_time += 1;
+      } else {
+        bucket.shipments_ready_late += 1;
+      }
+    }
+
+    const series = [];
+    for (let i = 0; i < dayKeys.length; i++) {
+      const day = dayKeys[i];
+      const bucket = byDay[day] || {
+        shipments_created: 0,
+        shipments_ready: 0,
+        shipments_ready_on_time: 0,
+        shipments_ready_late: 0,
+        shipments_open_now: 0,
+        durations: [],
+      };
+      const durations = bucket.durations.slice().sort((a, b) => a - b);
+
+      series.push({
+        date: day,
+        metrics: {
+          shipments_created: bucket.shipments_created,
+          shipments_ready: bucket.shipments_ready,
+          shipments_ready_on_time: bucket.shipments_ready_on_time,
+          shipments_ready_late: bucket.shipments_ready_late,
+          shipments_open_now: bucket.shipments_open_now,
+          avg_ready_hours: durations.length ? round2_(avg_(durations)) : 0,
+          p95_ready_hours: durations.length ? round2_(percentile_(durations, 0.95)) : 0,
+        },
+      });
+    }
+
+    return {
+      ok: true,
+      generated_at: nowIso_(),
+      tz,
+      window: {
+        from_date: fromDate,
+        to_date: toDate,
+        days,
+      },
+      sla_hours: slaHours,
+      series,
+      notes: {
+        source: 'shipments/events',
+        definition: 'ready_time - created_time, compared to sla_hours',
+        count_skipped: skippedMissingCreated,
+      },
+    };
+  });
+
   function normalizeDays_(raw) {
     const parsed = Number(raw);
     if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_DAYS;
@@ -336,6 +483,33 @@
     const parsed = Number(raw);
     if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_OVERDUE_THRESHOLD_MINUTES;
     return Math.floor(parsed);
+  }
+
+  function normalizeSlaHours_(raw) {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SLA_HOURS;
+    return Math.floor(parsed);
+  }
+
+  function isReadyShipment_(row) {
+    const readyRaw = asLower_(row.ready || row.is_ready || row.readiness_ready || row.readiness_status || row.status);
+    return readyRaw === 'true' || readyRaw === '1' || readyRaw === 'ready' || readyRaw === 'done' || readyRaw === 'completed' || readyRaw === 'closed';
+  }
+
+  function isShipmentCreatedEvent_(eventType) {
+    return eventType === 'shipment_created' || eventType === 'ship_created' || eventType === 'shipment_opened';
+  }
+
+  function isShipmentReadyEvent_(eventType) {
+    return eventType === 'shipment_ready'
+      || eventType === 'ship_ready'
+      || eventType === 'shipment_closed'
+      || eventType === 'ship_closed'
+      || eventType === 'ship_dispatched';
+  }
+
+  function round2_(value) {
+    return Math.round(value * 100) / 100;
   }
 
   function buildGroupedSeries_(series, dayKeys, shifts) {
