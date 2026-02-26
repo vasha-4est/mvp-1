@@ -162,6 +162,7 @@
       },
       shifts,
       series,
+      grouped_series: buildGroupedSeries_(series, dayKeys, shifts),
     };
   });
 
@@ -335,6 +336,47 @@
     const parsed = Number(raw);
     if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_OVERDUE_THRESHOLD_MINUTES;
     return Math.floor(parsed);
+  }
+
+  function buildGroupedSeries_(series, dayKeys, shifts) {
+    const shiftKeys = {};
+    for (let i = 0; i < shifts.length; i++) {
+      const key = asString_(shifts[i] && shifts[i].key);
+      if (key) shiftKeys[key] = true;
+    }
+
+    const byDate = {};
+    for (let i = 0; i < series.length; i++) {
+      const row = series[i] || {};
+      const date = asString_(row.date);
+      const shiftKey = asString_(row.shift_key);
+      if (!date || !shiftKey || !shiftKeys[shiftKey]) continue;
+
+      if (!byDate[date]) {
+        byDate[date] = { date: date, shifts: {} };
+      }
+
+      byDate[date].shifts[shiftKey] = {
+        metrics: row.metrics || {
+          inventory_moves_qty: 0,
+          inventory_moves_count: 0,
+          picking_confirmed_lines: 0,
+          batches_created: 0,
+          incidents_opened: 0,
+          incidents_closed: 0,
+        },
+      };
+    }
+
+    const out = [];
+    for (let i = 0; i < dayKeys.length; i++) {
+      const day = dayKeys[i];
+      if (byDate[day]) {
+        out.push(byDate[day]);
+      }
+    }
+
+    return out;
   }
 
   function safeReadAll_(sheetName) {

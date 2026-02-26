@@ -23,6 +23,11 @@ export type ThroughputShiftSeriesItem = {
   metrics: ThroughputShiftMetrics;
 };
 
+export type ThroughputGroupedSeriesItem = {
+  date: string;
+  shifts: Record<string, { metrics: ThroughputShiftMetrics }>;
+};
+
 export type ThroughputShiftsPayload = {
   ok: true;
   generated_at: string;
@@ -30,6 +35,7 @@ export type ThroughputShiftsPayload = {
   window: { from_date: string; to_date: string };
   shifts: ThroughputShiftDefinition[];
   series: ThroughputShiftSeriesItem[];
+  grouped_series: ThroughputGroupedSeriesItem[];
 };
 
 type ResultOk = { ok: true; data: ThroughputShiftsPayload };
@@ -42,6 +48,7 @@ type GasResponse = {
   window?: unknown;
   shifts?: unknown;
   series?: unknown;
+  grouped_series?: unknown;
 };
 
 function str(value: unknown): string {
@@ -73,8 +80,56 @@ function normalizeMetrics(value: unknown): ThroughputShiftMetrics {
   };
 }
 
+function normalizeGroupedSeries(
+  value: unknown,
+  validShiftKeys: Set<string>
+): ThroughputGroupedSeriesItem[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      const row = rec(item);
+      const date = str(row.date);
+      if (!date) return null;
+
+      const shiftsRaw = rec(row.shifts);
+      const shifts: Record<string, { metrics: ThroughputShiftMetrics }> = {};
+      for (const key of Object.keys(shiftsRaw)) {
+        if (!validShiftKeys.has(key)) continue;
+        shifts[key] = {
+          metrics: normalizeMetrics(rec(shiftsRaw[key]).metrics),
+        };
+      }
+
+      return {
+        date,
+        shifts,
+      };
+    })
+    .filter((item): item is ThroughputGroupedSeriesItem => item !== null)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
 function normalize(payload: GasResponse): ThroughputShiftsPayload {
   const window = rec(payload.window);
+
+  const shifts = Array.isArray(payload.shifts)
+    ? payload.shifts
+        .map((item) => {
+          const row = rec(item);
+          const key = str(row.key);
+          if (!key) return null;
+          return {
+            key,
+            title: str(row.title),
+            start: str(row.start),
+            end: str(row.end),
+          };
+        })
+        .filter((item): item is ThroughputShiftDefinition => item !== null)
+    : [];
+
+  const shiftKeys = new Set(shifts.map((shift) => shift.key));
 
   return {
     ok: true,
@@ -84,21 +139,7 @@ function normalize(payload: GasResponse): ThroughputShiftsPayload {
       from_date: str(window.from_date),
       to_date: str(window.to_date),
     },
-    shifts: Array.isArray(payload.shifts)
-      ? payload.shifts
-          .map((item) => {
-            const row = rec(item);
-            const key = str(row.key);
-            if (!key) return null;
-            return {
-              key,
-              title: str(row.title),
-              start: str(row.start),
-              end: str(row.end),
-            };
-          })
-          .filter((item): item is ThroughputShiftDefinition => item !== null)
-      : [],
+    shifts,
     series: Array.isArray(payload.series)
       ? payload.series
           .map((item) => {
@@ -114,6 +155,7 @@ function normalize(payload: GasResponse): ThroughputShiftsPayload {
           })
           .filter((item): item is ThroughputShiftSeriesItem => item !== null)
       : [],
+    grouped_series: normalizeGroupedSeries(payload.grouped_series, shiftKeys),
   };
 }
 
