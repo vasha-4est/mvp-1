@@ -46,6 +46,10 @@ const SHEET = {
   BATCH_EVENTS: 'batch_events',
   LOCKS: 'locks',
   WORK_ITEMS: 'work_items',
+  KPI_DAILY: 'kpi_daily',
+
+  // CONTROL_MODEL (tariffs/pay rates)
+  TARIFFS: 'tariffs',
 };
 
 // --- Where each sheet lives
@@ -83,6 +87,9 @@ const SHEET_DB = {
   [SHEET.BATCH_EVENTS]: DB.OPS,
   [SHEET.LOCKS]: DB.OPS,
   [SHEET.WORK_ITEMS]: DB.OPS,
+  [SHEET.KPI_DAILY]: DB.OPS,
+
+  [SHEET.TARIFFS]: DB.CTRL,
 };
 
 // --- Feature flags
