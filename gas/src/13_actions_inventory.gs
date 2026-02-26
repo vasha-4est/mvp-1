@@ -40,37 +40,45 @@
     const reason = str_(payload.reason);
     const proofRef = str_(payload.proof_ref);
     const qty = num_(payload.qty);
+    const expectedVersionFrom = parseVersionInt_(payload.expected_version_id_from);
+    const expectedVersionTo = parseVersionInt_(payload.expected_version_id_to);
 
     if (!skuId) throw new Error(ERROR.BAD_REQUEST + ': missing sku_id');
     if (!fromLocationId) throw new Error(ERROR.BAD_REQUEST + ': missing from_location_id');
     if (!toLocationId) throw new Error(ERROR.BAD_REQUEST + ': missing to_location_id');
     if (fromLocationId === toLocationId) throw new Error(ERROR.BAD_REQUEST + ': from_location_id must differ from to_location_id');
-    if (!Number.isFinite(qty) || qty <= 0) throw new Error(ERROR.BAD_REQUEST + ': qty must be > 0');
+    if (!Number.isFinite(qty) || qty <= 0 || Math.floor(qty) !== qty) throw new Error(ERROR.BAD_REQUEST + ': qty must be a positive integer');
+    if (expectedVersionFrom === null) throw new Error(ERROR.BAD_REQUEST + ': expected_version_id_from is required');
 
-    return withInventoryMoveLock_(ctx, skuId, fromLocationId, () => {
-      const replayMoveId = replayMoveId_(ctx.requestId);
-      if (idempExists_(ctx.requestId, 'inventory.move')) {
-        return {
-          ok: true,
-          replayed: true,
-          move_id: replayMoveId,
-          sku_id: skuId,
-          from_location_id: fromLocationId,
-          to_location_id: toLocationId,
-          qty,
-        };
-      }
+    const replayMoveId = replayMoveId_(ctx.requestId);
+    if (idempExists_(ctx.requestId, 'inventory.move')) {
+      return {
+        ok: true,
+        replayed: true,
+        move_id: replayMoveId,
+        sku_id: skuId,
+        from_location_id: fromLocationId,
+        to_location_id: toLocationId,
+        qty,
+      };
+    }
 
+    return withInventoryMoveLock_(ctx, skuId, fromLocationId, toLocationId, () => {
       const movedAt = nowIso_();
-      const fromRow = readBalanceRow_(skuId, fromLocationId);
+      const inventoryCtx = inventorySheetCtx_();
+      const fromRow = readBalanceRow_(inventoryCtx, skuId, fromLocationId);
       if (!fromRow) throw new Error(ERROR.NOT_FOUND + ': SKU_NOT_FOUND');
+      ensureExpectedVersion_(skuId, fromLocationId, expectedVersionFrom, fromRow.versionId);
       if (fromRow.onHandQty < qty) throw new Error(ERROR.INSUFFICIENT_STOCK + ': insufficient on_hand_qty');
 
-      updateBalanceRow_(fromRow, fromRow.onHandQty - qty, fromRow.reservedQty, movedAt);
+      const fromVersionNew = updateBalanceRow_(fromRow, fromRow.onHandQty - qty, fromRow.reservedQty, movedAt);
 
-      const toRow = readBalanceRow_(skuId, toLocationId);
+      const toRow = readBalanceRow_(inventoryCtx, skuId, toLocationId);
+      let toVersionNew = '';
       if (toRow) {
-        updateBalanceRow_(toRow, toRow.onHandQty + qty, toRow.reservedQty, movedAt);
+        if (expectedVersionTo === null) throw new Error(ERROR.BAD_REQUEST + ': expected_version_id_to is required when destination exists');
+        ensureExpectedVersion_(skuId, toLocationId, expectedVersionTo, toRow.versionId);
+        toVersionNew = updateBalanceRow_(toRow, toRow.onHandQty + qty, toRow.reservedQty, movedAt);
       } else {
         Db_.append_(SHEET.INVENTORY, {
           sku_id: skuId,
@@ -81,6 +89,9 @@
           version_id: '1',
           updated_at: movedAt,
         });
+        const appendedRowNumber = inventoryCtx.sheet.getLastRow();
+        rememberInventoryIndex_(inventoryCtx, skuId, toLocationId, appendedRowNumber);
+        toVersionNew = '1';
       }
 
       const moveId = nextMoveId_(movedAt);
@@ -115,6 +126,8 @@
         from_location_id: fromLocationId,
         to_location_id: toLocationId,
         qty,
+        from_version_id_new: fromVersionNew,
+        to_version_id_new: toVersionNew,
       };
     });
   });
@@ -127,22 +140,28 @@
     const reason = str_(payload.reason);
     const proofRef = str_(payload.proof_ref);
     const qty = num_(payload.qty);
+    const expectedVersionId = parseVersionInt_(payload.expected_version_id);
+    const requireExpectedVersion = payload.require_expected_version !== false;
 
     if (!skuId) throw new Error(ERROR.BAD_REQUEST + ': missing sku_id');
     if (!locationId) throw new Error(ERROR.BAD_REQUEST + ': missing location_id');
-    if (!Number.isFinite(qty) || qty <= 0) throw new Error(ERROR.BAD_REQUEST + ': qty must be > 0');
+    if (!Number.isFinite(qty) || qty <= 0 || Math.floor(qty) !== qty) throw new Error(ERROR.BAD_REQUEST + ': qty must be a positive integer');
+    if (requireExpectedVersion && expectedVersionId === null) throw new Error(ERROR.BAD_REQUEST + ': expected_version_id is required');
 
     const action = 'inventory.reserve';
     const operationId = operationId_(ctx.requestId, 'RSV');
 
-    return withInventoryBalanceLock_(ctx, skuId, locationId, () => {
-      if (idempExists_(ctx.requestId, action)) {
-        return replayReserveResponse_(ctx.requestId, operationId, skuId, locationId, qty);
-      }
+    if (idempExists_(ctx.requestId, action)) {
+      return replayReserveResponse_(ctx.requestId, operationId, skuId, locationId, qty);
+    }
 
+    return withInventoryBalanceLock_(ctx, skuId, locationId, () => {
       const updatedAt = nowIso_();
-      const row = readBalanceRow_(skuId, locationId);
+      const inventoryCtx = inventorySheetCtx_();
+      const row = readBalanceRow_(inventoryCtx, skuId, locationId);
       if (!row) throw new Error(ERROR.NOT_FOUND + ': SKU_NOT_FOUND');
+      const effectiveExpectedVersion = expectedVersionId === null ? row.versionId : expectedVersionId;
+      ensureExpectedVersion_(skuId, locationId, effectiveExpectedVersion, row.versionId);
       if (row.availableQty < qty) throw new Error(ERROR.INSUFFICIENT_AVAILABLE + ': insufficient available_qty');
 
       const nextReservedQty = row.reservedQty + qty;
@@ -186,22 +205,28 @@
     const reason = str_(payload.reason);
     const proofRef = str_(payload.proof_ref);
     const qty = num_(payload.qty);
+    const expectedVersionId = parseVersionInt_(payload.expected_version_id);
+    const requireExpectedVersion = payload.require_expected_version !== false;
 
     if (!skuId) throw new Error(ERROR.BAD_REQUEST + ': missing sku_id');
     if (!locationId) throw new Error(ERROR.BAD_REQUEST + ': missing location_id');
-    if (!Number.isFinite(qty) || qty <= 0) throw new Error(ERROR.BAD_REQUEST + ': qty must be > 0');
+    if (!Number.isFinite(qty) || qty <= 0 || Math.floor(qty) !== qty) throw new Error(ERROR.BAD_REQUEST + ': qty must be a positive integer');
+    if (requireExpectedVersion && expectedVersionId === null) throw new Error(ERROR.BAD_REQUEST + ': expected_version_id is required');
 
     const action = 'inventory.release';
     const operationId = operationId_(ctx.requestId, 'REL');
 
-    return withInventoryBalanceLock_(ctx, skuId, locationId, () => {
-      if (idempExists_(ctx.requestId, action)) {
-        return replayReleaseResponse_(ctx.requestId, operationId, skuId, locationId, qty);
-      }
+    if (idempExists_(ctx.requestId, action)) {
+      return replayReleaseResponse_(ctx.requestId, operationId, skuId, locationId, qty);
+    }
 
+    return withInventoryBalanceLock_(ctx, skuId, locationId, () => {
       const updatedAt = nowIso_();
-      const row = readBalanceRow_(skuId, locationId);
+      const inventoryCtx = inventorySheetCtx_();
+      const row = readBalanceRow_(inventoryCtx, skuId, locationId);
       if (!row) throw new Error(ERROR.NOT_FOUND + ': SKU_NOT_FOUND');
+      const effectiveExpectedVersion = expectedVersionId === null ? row.versionId : expectedVersionId;
+      ensureExpectedVersion_(skuId, locationId, effectiveExpectedVersion, row.versionId);
       if (row.reservedQty < qty) throw new Error(ERROR.INSUFFICIENT_RESERVED + ': insufficient reserved_qty');
 
       const nextReservedQty = row.reservedQty - qty;
@@ -237,86 +262,19 @@
     });
   });
 
-  function withInventoryMoveLock_(ctx, skuId, fromLocationId, fn) {
-    const lockKey = 'inventory:' + skuId + ':' + fromLocationId;
-    const now = new Date();
-    const acquiredAt = now.toISOString();
-    const expiresAt = new Date(now.getTime() + ENTITY_LOCK_TTL_SEC * 1000).toISOString();
-    const lockSheet = Sys_.sheet_('locks');
-    const lockHeader = lockSheet.getRange(1, 1, 1, lockSheet.getLastColumn()).getValues()[0].map(String);
-    const lockIdx = index_(lockHeader, [
-      'lock_key',
-      'entity_type',
-      'entity_id',
-      'held_by_user_id',
-      'held_by_role_id',
-      'acquired_at',
-      'expires_at',
-      'status',
-    ]);
-
-    const lastRow = lockSheet.getLastRow();
-    if (lastRow >= 2) {
-      const lockRows = lockSheet.getRange(2, 1, lastRow - 1, lockHeader.length).getValues();
-      const toDelete = [];
-
-      for (let i = 0; i < lockRows.length; i++) {
-        if (str_(lockRows[i][lockIdx.lock_key]) !== lockKey) continue;
-
-        const expiresAtValue = new Date(str_(lockRows[i][lockIdx.expires_at]));
-        const isExpired = Number.isFinite(expiresAtValue.getTime()) && expiresAtValue.getTime() < now.getTime();
-        if (isExpired) {
-          toDelete.push(i + 2);
-          continue;
-        }
-
-        const status = str_(lockRows[i][lockIdx.status]);
-        if (status === 'active') {
-          throw new Error(ERROR.LOCK_CONFLICT + ': Inventory entity is locked');
-        }
-      }
-
-      for (let j = toDelete.length - 1; j >= 0; j--) {
-        lockSheet.deleteRow(toDelete[j]);
-      }
-    }
-
-    lockSheet.appendRow(lockHeader.map((columnName) => {
-      if (columnName === 'lock_key') return lockKey;
-      if (columnName === 'entity_type') return 'inventory';
-      if (columnName === 'entity_id') return skuId + '|' + fromLocationId;
-      if (columnName === 'held_by_user_id') return actorUserId_(ctx) || 'system';
-      if (columnName === 'held_by_role_id') return actorRoleId_(ctx);
-      if (columnName === 'acquired_at') return acquiredAt;
-      if (columnName === 'expires_at') return expiresAt;
-      if (columnName === 'status') return 'active';
-      return '';
-    }));
-
-    try {
-      return fn();
-    } finally {
-      const currentLastRow = lockSheet.getLastRow();
-      if (currentLastRow < 2) return;
-
-      const rows = lockSheet.getRange(2, 1, currentLastRow - 1, lockHeader.length).getValues();
-      for (let i = rows.length - 1; i >= 0; i--) {
-        const rowLockKey = str_(rows[i][lockIdx.lock_key]);
-        const rowAcquiredAt = str_(rows[i][lockIdx.acquired_at]);
-        if (rowLockKey === lockKey && rowAcquiredAt === acquiredAt) {
-          lockSheet.deleteRow(i + 2);
-          break;
-        }
-      }
-    }
+  function withInventoryMoveLock_(ctx, skuId, fromLocationId, toLocationId, fn) {
+    const lockIds = [skuId + ':' + fromLocationId, skuId + ':' + toLocationId].sort();
+    return withEntitySheetLocks_(ctx, 'inventory_balance', lockIds, fn);
   }
 
   function withInventoryBalanceLock_(ctx, skuId, locationId, fn) {
-    return withEntitySheetLock_(ctx, 'inventory_balance', skuId + ':' + locationId, fn);
+    return withEntitySheetLocks_(ctx, 'inventory_balance', [skuId + ':' + locationId], fn);
   }
 
-  function withEntitySheetLock_(ctx, entityType, entityId, fn) {
-    const lockKey = entityType + ':' + entityId;
+  function withEntitySheetLocks_(ctx, entityType, entityIds, fn) {
+    const ids = Array.isArray(entityIds) ? entityIds.slice() : [];
+    if (ids.length === 0) return fn();
+
     const now = new Date();
     const acquiredAt = now.toISOString();
     const expiresAt = new Date(now.getTime() + ENTITY_LOCK_TTL_SEC * 1000).toISOString();
@@ -333,61 +291,80 @@
       'status',
     ]);
 
-    const lastRow = lockSheet.getLastRow();
-    if (lastRow >= 2) {
-      const lockRows = lockSheet.getRange(2, 1, lastRow - 1, lockHeader.length).getValues();
-      const toDelete = [];
+    const lockRows = readLockRows_(lockSheet, lockHeader.length);
+    const toDelete = [];
+    const activeKeys = {};
 
-      for (let i = 0; i < lockRows.length; i++) {
-        if (str_(lockRows[i][lockIdx.lock_key]) !== lockKey) continue;
-
-        const expiresAtValue = new Date(str_(lockRows[i][lockIdx.expires_at]));
-        const isExpired = Number.isFinite(expiresAtValue.getTime()) && expiresAtValue.getTime() < now.getTime();
-        if (isExpired) {
-          toDelete.push(i + 2);
-          continue;
-        }
-
-        const status = str_(lockRows[i][lockIdx.status]);
-        if (status === 'active') {
-          throw new Error(ERROR.LOCK_CONFLICT + ': Inventory entity is locked');
-        }
+    for (let i = 0; i < lockRows.length; i++) {
+      const row = lockRows[i];
+      const lockKey = str_(row.values[lockIdx.lock_key]);
+      const status = str_(row.values[lockIdx.status]);
+      const rowExpiresAt = new Date(str_(row.values[lockIdx.expires_at]));
+      const expired = Number.isFinite(rowExpiresAt.getTime()) && rowExpiresAt.getTime() < now.getTime();
+      if (expired) {
+        toDelete.push(row.rowNumber);
+        continue;
       }
-
-      for (let j = toDelete.length - 1; j >= 0; j--) {
-        lockSheet.deleteRow(toDelete[j]);
-      }
+      if (status === 'active') activeKeys[lockKey] = true;
     }
 
-    lockSheet.appendRow(lockHeader.map((columnName) => {
-      if (columnName === 'lock_key') return lockKey;
-      if (columnName === 'entity_type') return entityType;
-      if (columnName === 'entity_id') return entityId;
-      if (columnName === 'held_by_user_id') return actorUserId_(ctx) || 'system';
-      if (columnName === 'held_by_role_id') return actorRoleId_(ctx);
-      if (columnName === 'acquired_at') return acquiredAt;
-      if (columnName === 'expires_at') return expiresAt;
-      if (columnName === 'status') return 'active';
-      return '';
-    }));
+    for (let j = toDelete.length - 1; j >= 0; j--) {
+      lockSheet.deleteRow(toDelete[j]);
+    }
+
+    const lockKeys = [];
+    for (let k = 0; k < ids.length; k++) {
+      const lockKey = entityType + ':' + ids[k];
+      if (activeKeys[lockKey]) throw new Error(ERROR.LOCK_CONFLICT + ': Inventory entity is locked');
+      lockKeys.push(lockKey);
+    }
+
+    for (let a = 0; a < ids.length; a++) {
+      const entityId = ids[a];
+      const lockKey = lockKeys[a];
+      lockSheet.appendRow(lockHeader.map((columnName) => {
+        if (columnName === 'lock_key') return lockKey;
+        if (columnName === 'entity_type') return entityType;
+        if (columnName === 'entity_id') return entityId;
+        if (columnName === 'held_by_user_id') return actorUserId_(ctx) || 'system';
+        if (columnName === 'held_by_role_id') return actorRoleId_(ctx);
+        if (columnName === 'acquired_at') return acquiredAt;
+        if (columnName === 'expires_at') return expiresAt;
+        if (columnName === 'status') return 'active';
+        return '';
+      }));
+    }
 
     try {
       return fn();
     } finally {
-      const currentLastRow = lockSheet.getLastRow();
-      if (currentLastRow < 2) return;
-
-      const rows = lockSheet.getRange(2, 1, currentLastRow - 1, lockHeader.length).getValues();
+      const rows = readLockRows_(lockSheet, lockHeader.length);
       for (let i = rows.length - 1; i >= 0; i--) {
-        const rowLockKey = str_(rows[i][lockIdx.lock_key]);
-        const rowAcquiredAt = str_(rows[i][lockIdx.acquired_at]);
-        if (rowLockKey === lockKey && rowAcquiredAt === acquiredAt) {
-          lockSheet.deleteRow(i + 2);
-          break;
+        const row = rows[i];
+        const rowLockKey = str_(row.values[lockIdx.lock_key]);
+        const rowAcquiredAt = str_(row.values[lockIdx.acquired_at]);
+        if (rowAcquiredAt !== acquiredAt) continue;
+        for (let lk = 0; lk < lockKeys.length; lk++) {
+          if (rowLockKey === lockKeys[lk]) {
+            lockSheet.deleteRow(row.rowNumber);
+            break;
+          }
         }
       }
     }
   }
+
+  function readLockRows_(sheet, width) {
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return [];
+    const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+    const rows = [];
+    for (let i = 0; i < values.length; i++) {
+      rows.push({ rowNumber: i + 2, values: values[i] });
+    }
+    return rows;
+  }
+
 
   function idempExists_(requestId, action) {
     const req = str_(requestId);
@@ -436,7 +413,8 @@
       };
     }
 
-    const row = readBalanceRow_(skuId, locationId);
+    const inventoryCtx = inventorySheetCtx_();
+    const row = readBalanceRow_(inventoryCtx, skuId, locationId);
     return {
       ok: true,
       replayed: true,
@@ -447,7 +425,7 @@
       qty,
       reserved_qty: row ? row.reservedQty : null,
       available_qty: row ? row.availableQty : null,
-      version_id: row ? row.versionId : '',
+      version_id: row ? String(row.versionId) : '',
       updated_at: row ? row.updatedAt : nowIso_(),
     };
   }
@@ -470,7 +448,8 @@
       };
     }
 
-    const row = readBalanceRow_(skuId, locationId);
+    const inventoryCtx = inventorySheetCtx_();
+    const row = readBalanceRow_(inventoryCtx, skuId, locationId);
     return {
       ok: true,
       replayed: true,
@@ -481,7 +460,7 @@
       qty,
       reserved_qty: row ? row.reservedQty : null,
       available_qty: row ? row.availableQty : null,
-      version_id: row ? row.versionId : '',
+      version_id: row ? String(row.versionId) : '',
       updated_at: row ? row.updatedAt : nowIso_(),
     };
   }
@@ -511,54 +490,160 @@
     }
   }
 
-  function readBalanceRow_(skuId, locationId) {
-    const sheet = Sys_.sheet_(SHEET.INVENTORY);
-    const lastRow = sheet.getLastRow();
-    if (lastRow < 2) return null;
 
+  function parseVersionInt_(value) {
+    if (value === undefined || value === null || String(value).trim() === '') return null;
+    const parsed = parseInt(String(value), 10);
+    if (!Number.isFinite(parsed)) return null;
+    return parsed;
+  }
+
+  function ensureExpectedVersion_(skuId, locationId, expectedVersionId, currentVersionId) {
+    const currentVersion = parseVersionInt_(currentVersionId);
+    if (currentVersion === null || currentVersion !== expectedVersionId) {
+      throw new Error(
+        ERROR.VERSION_CONFLICT + ': stale version | ' + JSON.stringify({
+          sku_id: skuId,
+          location_id: locationId,
+          expected_version_id: expectedVersionId,
+          actual_version_id: currentVersion,
+        })
+      );
+    }
+  }
+
+  function inventorySheetCtx_() {
+    const sheet = Sys_.sheet_(SHEET.INVENTORY);
     const header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
     const idx = index_(header, ['sku_id', 'location_id', 'on_hand_qty', 'reserved_qty', 'available_qty', 'version_id', 'updated_at']);
-    const values = sheet.getRange(2, 1, lastRow - 1, header.length).getValues();
+    return {
+      sheet,
+      header,
+      idx,
+      lastRow: sheet.getLastRow(),
+      cacheKey: 'inventory_index_v1',
+    };
+  }
 
-    for (let i = 0; i < values.length; i++) {
-      if (str_(values[i][idx.sku_id]) === skuId && str_(values[i][idx.location_id]) === locationId) {
-        return {
-          rowNumber: i + 2,
-          header,
-          idx,
-          rowValues: values[i],
-          onHandQty: num_(values[i][idx.on_hand_qty]),
-          reservedQty: num_(values[i][idx.reserved_qty]),
-          availableQty: num_(values[i][idx.available_qty]),
-          versionId: str_(values[i][idx.version_id] || '0'),
-          updatedAt: str_(values[i][idx.updated_at]),
-        };
-      }
+  function readBalanceRow_(ctx, skuId, locationId) {
+    if (!ctx || ctx.lastRow < 2) return null;
+
+    const rowNumber = inventoryIndexLookup_(ctx, skuId, locationId);
+    if (rowNumber === null) return null;
+
+    const values = ctx.sheet.getRange(rowNumber, 1, 1, ctx.header.length).getValues()[0];
+    if (str_(values[ctx.idx.sku_id]) !== skuId || str_(values[ctx.idx.location_id]) !== locationId) {
+      clearInventoryIndex_(ctx);
+      return null;
     }
 
-    return null;
+    return {
+      rowNumber,
+      header: ctx.header,
+      idx: ctx.idx,
+      rowValues: values,
+      sheet: ctx.sheet,
+      onHandQty: num_(values[ctx.idx.on_hand_qty]),
+      reservedQty: num_(values[ctx.idx.reserved_qty]),
+      availableQty: num_(values[ctx.idx.available_qty]),
+      versionId: parseVersionInt_(values[ctx.idx.version_id]) || 0,
+      updatedAt: str_(values[ctx.idx.updated_at]),
+    };
   }
 
   function updateBalanceRow_(row, nextOnHandQty, nextReservedQty, updatedAt) {
-    const sheet = Sys_.sheet_(SHEET.INVENTORY);
-    const currentVersion = str_(sheet.getRange(row.rowNumber, row.idx.version_id + 1).getValue() || '0');
-    if (currentVersion !== row.versionId) {
-      throw new Error(ERROR.LOCK_CONFLICT + ': version mismatch');
+    const currentRow = row.sheet.getRange(row.rowNumber, 1, 1, row.header.length).getValues()[0];
+    const currentVersion = parseVersionInt_(currentRow[row.idx.version_id]);
+    if (currentVersion === null || currentVersion !== row.versionId) {
+      throw new Error(ERROR.VERSION_CONFLICT + ': stale version | ' + JSON.stringify({
+        sku_id: str_(currentRow[row.idx.sku_id]),
+        location_id: str_(currentRow[row.idx.location_id]),
+        expected_version_id: row.versionId,
+        actual_version_id: currentVersion,
+      }));
     }
 
     const onHandQty = num_(nextOnHandQty);
     const reservedQty = num_(nextReservedQty);
     const availableQty = onHandQty - reservedQty;
-    const nextVersion = String(num_(currentVersion) + 1);
+    const nextVersion = String(currentVersion + 1);
 
-    const out = row.rowValues.slice();
+    const out = currentRow.slice();
     out[row.idx.on_hand_qty] = String(onHandQty);
     out[row.idx.reserved_qty] = String(reservedQty);
     out[row.idx.available_qty] = String(availableQty);
     out[row.idx.version_id] = nextVersion;
     out[row.idx.updated_at] = updatedAt;
-    sheet.getRange(row.rowNumber, 1, 1, row.header.length).setValues([out]);
+    row.sheet.getRange(row.rowNumber, 1, 1, row.header.length).setValues([out]);
     return nextVersion;
+  }
+
+  function inventoryIndexLookup_(ctx, skuId, locationId) {
+    const map = loadInventoryIndexMap_(ctx);
+    const key = inventoryKey_(skuId, locationId);
+    const raw = map[key];
+    if (raw !== undefined) {
+      const parsed = parseInt(String(raw), 10);
+      if (Number.isFinite(parsed) && parsed >= 2 && parsed <= ctx.lastRow) return parsed;
+      return null;
+    }
+
+    if (ctx.lastRow < 2) return null;
+    const startCol = Math.min(ctx.idx.sku_id, ctx.idx.location_id) + 1;
+    const width = Math.abs(ctx.idx.sku_id - ctx.idx.location_id) + 1;
+    const values = ctx.sheet.getRange(2, startCol, ctx.lastRow - 1, width).getValues();
+    const offsetSku = ctx.idx.sku_id - (startCol - 1);
+    const offsetLoc = ctx.idx.location_id - (startCol - 1);
+
+    for (let i = 0; i < values.length; i++) {
+      const rowSku = str_(values[i][offsetSku]);
+      const rowLoc = str_(values[i][offsetLoc]);
+      const rowNum = i + 2;
+      map[inventoryKey_(rowSku, rowLoc)] = rowNum;
+    }
+
+    storeInventoryIndexMap_(ctx, map);
+    return map[key] ? parseInt(String(map[key]), 10) : null;
+  }
+
+  function rememberInventoryIndex_(ctx, skuId, locationId, rowNumber) {
+    const map = loadInventoryIndexMap_(ctx);
+    map[inventoryKey_(skuId, locationId)] = rowNumber;
+    storeInventoryIndexMap_(ctx, map);
+  }
+
+  function clearInventoryIndex_(ctx) {
+    const props = PropertiesService.getScriptProperties();
+    props.deleteProperty(ctx.cacheKey);
+  }
+
+  function loadInventoryIndexMap_(ctx) {
+    const props = PropertiesService.getScriptProperties();
+    const raw = props.getProperty(ctx.cacheKey);
+    const now = Date.now();
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && parsed.expires_at && parsed.index) {
+          if (Number(parsed.expires_at) > now) {
+            return parsed.index;
+          }
+        }
+      } catch (err) {}
+    }
+    return {};
+  }
+
+  function storeInventoryIndexMap_(ctx, map) {
+    const props = PropertiesService.getScriptProperties();
+    props.setProperty(ctx.cacheKey, JSON.stringify({
+      expires_at: Date.now() + 60 * 1000,
+      index: map,
+    }));
+  }
+
+  function inventoryKey_(skuId, locationId) {
+    return str_(skuId) + '::' + str_(locationId);
   }
 
   function appendEvent_(eventType, entityType, entityId, payload, createdAt, ctx) {

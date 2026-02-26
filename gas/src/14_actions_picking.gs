@@ -38,6 +38,7 @@
           qty: line.qty,
           reason: 'picking_list_create',
           proof_ref: pickingListId,
+          require_expected_version: false,
         });
 
         Actions_.dispatch_('inventory.reserve', reserveCtx);
@@ -264,6 +265,7 @@
             qty: shortQty,
             reason: 'picking_confirm_short_release',
             proof_ref: pickingListId + ':' + lineId,
+            require_expected_version: false,
           });
           Actions_.dispatch_('inventory.release', releaseCtx);
         }
@@ -586,6 +588,7 @@
           qty: line.qty,
           reason: 'picking_list_create_rollback',
           proof_ref: pickingListId,
+          require_expected_version: false,
         });
         Actions_.dispatch_('inventory.release', releaseCtx);
       } catch (releaseErr) {
