@@ -53,14 +53,18 @@ export default function EodSnapshotView() {
         credentials: "include",
       });
 
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      const payload = (await response.json().catch(() => null)) as { error?: string; code?: string } | null;
       if (response.status === 404) {
         setLoadState({ status: "ready", data: null, error: null });
         return;
       }
 
       if (!response.ok) {
-        setLoadState({ status: "ready", data: null, error: payload?.error ?? "Could not load EOD snapshot." });
+        setLoadState({
+          status: "ready",
+          data: null,
+          error: payload?.code ? `${payload.code}: ${payload?.error ?? "Could not load EOD snapshot."}` : payload?.error ?? "Could not load EOD snapshot.",
+        });
         return;
       }
 
@@ -91,9 +95,13 @@ export default function EodSnapshotView() {
         body: JSON.stringify({ date, tz: TZ, days_window: 1 }),
       });
 
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      const payload = (await response.json().catch(() => null)) as { error?: string; code?: string } | null;
       if (!response.ok) {
-        setLoadState({ status: "ready", data: null, error: payload?.error ?? "Could not generate snapshot." });
+        setLoadState({
+          status: "ready",
+          data: null,
+          error: payload?.code ? `${payload.code}: ${payload?.error ?? "Could not generate snapshot."}` : payload?.error ?? "Could not generate snapshot.",
+        });
         return;
       }
 

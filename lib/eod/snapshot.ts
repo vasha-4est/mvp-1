@@ -6,6 +6,7 @@ export type EodSnapshotPayload = {
   generated_at: string;
   tz: string;
   snapshot_date: string;
+  date?: string;
   replayed: boolean;
   snapshot_id: string;
   snapshot: {
@@ -33,6 +34,7 @@ export type EodSnapshotPayload = {
       risk_flags: string[];
     };
     notes: string;
+    errors?: Array<{ source: string; code: string; error: string }>;
   };
 };
 

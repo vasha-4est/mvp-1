@@ -26,14 +26,22 @@
       }
 
       const daily = tryAction_('daily.summary.get', {
-        days: Math.max(daysWindow, 2),
+        days: Math.max(1, daysWindow),
         tz: tz,
       });
       const tower = tryAction_('control_tower.read', {});
+      const throughput = tryAction_('kpi.throughput.get', { days: 1 });
+      const throughputShifts = tryAction_('kpi.throughput.shifts.get', { days: 1, tz: tz });
+      const shipmentSla = tryAction_('kpi.shipment.sla.get', { days: 1, tz: tz, sla_hours: 24 });
+
+      if (!daily.ok && !tower.ok) {
+        throw new Error(ERROR.BAD_GATEWAY + ': core EOD sources unavailable');
+      }
 
       const summary = buildSnapshot_(snapshotDate, tz, daily.data, tower.data, {
         dailyOk: daily.ok,
         towerOk: tower.ok,
+        optional: [throughput, throughputShifts, shipmentSla],
       });
 
       const generatedAt = nowIso_();
@@ -177,9 +185,10 @@
         role_id: ROLE.OWNER,
         request_id: 'eod-internal-' + uuid_(),
       });
-      return { ok: true, data: data };
-    } catch (_err) {
-      return { ok: false, data: null };
+      return { ok: true, action: action, data: data, code: '', error: '' };
+    } catch (err) {
+      const parsed = parseError_(err);
+      return { ok: false, action: action, data: null, code: parsed.code, error: parsed.error };
     }
   }
 
@@ -214,6 +223,8 @@
     if (shipmentsOpenNow > 0) tomorrowLoad.risk_flags.push('SHIPMENTS_OPEN');
     if (!status.dailyOk || !status.towerOk) tomorrowLoad.risk_flags.push('DATA_PARTIAL');
 
+    const partialErrors = collectErrors_(status);
+
     const notes = buildNotes_({
       snapshotDate: snapshotDate,
       tz: tz,
@@ -222,7 +233,7 @@
       incidentsOpenNow: incidentsOpenNow,
       shipmentsOpenNow: shipmentsOpenNow,
       locksActiveTotal: locksActiveTotal,
-      partial: !status.dailyOk || !status.towerOk,
+      partial: !status.dailyOk || !status.towerOk || partialErrors.length > 0,
     });
 
     return {
@@ -241,6 +252,7 @@
       },
       tomorrow_load: tomorrowLoad,
       notes: notes,
+      errors: partialErrors,
     };
   }
 
@@ -272,6 +284,7 @@
           risk_flags: ['DATA_PARTIAL'],
         },
         notes: 'Snapshot payload is unavailable.',
+        errors: [{ source: 'snapshot', code: 'BAD_GATEWAY', error: 'payload unavailable' }],
       },
     };
   }
@@ -383,6 +396,33 @@
       lines.push('Data is partial due to temporary source outage (control tower or daily summary).');
     }
     return lines.join('\n');
+  }
+
+
+  function collectErrors_(status) {
+    const out = [];
+    if (!status.dailyOk) out.push({ source: 'daily.summary.get', code: 'BAD_GATEWAY', error: 'daily.summary unavailable' });
+    if (!status.towerOk) out.push({ source: 'control_tower.read', code: 'BAD_GATEWAY', error: 'control_tower unavailable' });
+
+    const optional = (status && Array.isArray(status.optional)) ? status.optional : [];
+    for (let i = 0; i < optional.length; i++) {
+      const item = optional[i] || {};
+      if (item.ok) continue;
+      out.push({
+        source: asString_(item.action) || 'unknown',
+        code: asString_(item.code) || 'BAD_GATEWAY',
+        error: asString_(item.error) || 'optional source failed',
+      });
+    }
+
+    return out;
+  }
+
+  function parseError_(err) {
+    const text = asString_(err && err.message ? err.message : err);
+    const match = text.match(/^([A-Z_]+):\s*(.+)$/);
+    if (match) return { code: match[1], error: match[2] };
+    return { code: 'BAD_GATEWAY', error: text || 'Bad gateway' };
   }
 
   function asString_(value) {
