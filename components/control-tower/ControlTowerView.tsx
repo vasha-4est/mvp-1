@@ -1,17 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
-
-import { ControlTowerErrorState } from "./ControlTowerErrorState";
-import { ControlTowerLoadingState } from "./ControlTowerLoadingState";
-import { ControlTowerSection } from "./ControlTowerSection";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 type LoadState =
   | { status: "loading" }
-  | { status: "ready"; payload: unknown; intelligence: unknown; errorMessage?: string };
-
-const MAX_RECENT_EVENTS = 8;
+  | { status: "ready"; payload: unknown; errorMessage?: string };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -21,12 +14,22 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+function asArray(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => asRecord(item))
+    .filter((item): item is Record<string, unknown> => item !== null);
+}
+
 function formatNumber(value: unknown): string {
   return typeof value === "number" ? value.toLocaleString() : "—";
 }
 
 function formatDate(value: unknown): string {
-  if (typeof value !== "string") {
+  if (typeof value !== "string" || !value.trim()) {
     return "—";
   }
 
@@ -38,67 +41,17 @@ function formatDate(value: unknown): string {
   return date.toLocaleString();
 }
 
-function formatValue(value: unknown): string {
-  if (typeof value === "number") {
-    return value.toLocaleString();
-  }
-
-  if (typeof value === "string") {
-    return value;
-  }
-
-  if (typeof value === "boolean") {
-    return value ? "Yes" : "No";
-  }
-
-  return "—";
-}
-
-function getRootPayload(payload: unknown): Record<string, unknown> {
-  const root = asRecord(payload);
-  if (!root) {
-    return {};
-  }
-
-  const nestedData = asRecord(root.data);
-  return nestedData ?? root;
-}
-
-function getRecentEvents(data: Record<string, unknown>): Array<Record<string, unknown>> {
-  const candidates = [data.recent_events, data.events, data.recentEvents];
-
-  for (const candidate of candidates) {
-    if (Array.isArray(candidate)) {
-      return candidate.map((item) => asRecord(item)).filter((item): item is Record<string, unknown> => !!item);
-    }
-  }
-
-  return [];
-}
-
-function getTopBottlenecks(source: unknown): Array<Record<string, unknown>> {
-  if (!Array.isArray(source)) {
-    return [];
-  }
-
-  return source.map((item) => asRecord(item)).filter((item): item is Record<string, unknown> => !!item);
-}
-
-function SummaryList({ source }: { source: unknown }) {
-  const record = asRecord(source);
-  if (!record || Object.keys(record).length === 0) {
-    return <p style={{ margin: 0, color: "#666" }}>No data yet.</p>;
-  }
-
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <ul style={{ margin: 0, paddingLeft: 18 }}>
-      {Object.entries(record).map(([key, value]) => (
-        <li key={key}>
-          <strong>{key}</strong>: {formatValue(value)}
-        </li>
-      ))}
-    </ul>
+    <section style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, background: "#fff" }}>
+      <h2 style={{ margin: "0 0 10px", fontSize: 16 }}>{title}</h2>
+      {children}
+    </section>
   );
+}
+
+function EmptyState({ message }: { message: string }) {
+  return <p style={{ margin: 0, color: "#6b7280" }}>{message}</p>;
 }
 
 export function ControlTowerView() {
@@ -114,27 +67,15 @@ export function ControlTowerView() {
       });
 
       if (!response.ok) {
-        setState({
-          status: "ready",
-          payload: {},
-          intelligence: {},
-          errorMessage: `Request failed with status ${response.status}`,
-        });
+        setState({ status: "ready", payload: {}, errorMessage: `Request failed with status ${response.status}` });
         return;
       }
 
       const payload = (await response.json()) as unknown;
-      const intelligenceResponse = await fetch("/api/control-tower/intelligence", {
-        method: "GET",
-        cache: "no-store",
-      });
-
-      const intelligence = intelligenceResponse.ok ? ((await intelligenceResponse.json()) as unknown) : {};
-
-      setState({ status: "ready", payload, intelligence });
+      setState({ status: "ready", payload });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load Control Tower data.";
-      setState({ status: "ready", payload: {}, intelligence: {}, errorMessage: message });
+      setState({ status: "ready", payload: {}, errorMessage: message });
     }
   }, []);
 
@@ -143,86 +84,156 @@ export function ControlTowerView() {
   }, [load]);
 
   if (state.status === "loading") {
-    return <ControlTowerLoadingState />;
+    return <p style={{ margin: 0 }}>Loading control tower…</p>;
   }
 
-  const data = getRootPayload(state.payload);
-  const recentEvents = getRecentEvents(data).slice(0, MAX_RECENT_EVENTS);
-  const intelligenceRoot = getRootPayload(state.intelligence);
-  const assemblyIntelligence = asRecord(intelligenceRoot.assembly) ?? {};
-  const availabilityStats = asRecord(assemblyIntelligence.availability_stats) ?? {};
-  const topBottlenecks = getTopBottlenecks(assemblyIntelligence.top_bottlenecks).slice(0, 5);
-  const deficitSummary = asRecord(data.deficit_summary);
+  const root = asRecord(state.payload) ?? {};
+  const sections = asRecord(root.sections) ?? {};
+
+  const deficit = asRecord(sections.deficit) ?? {};
+  const topShort = asArray(deficit.top_short_skus);
+
+  const shipmentsReadiness = asArray(sections.shipments_readiness);
+
+  const inventory = asRecord(sections.inventory) ?? {};
+  const topAvailable = asArray(inventory.top_available);
+  const lowStock = asArray(inventory.low_stock);
+
+  const picking = asRecord(sections.picking) ?? {};
+
+  const incidents = asRecord(sections.incidents) ?? {};
+  const bySeverity = asRecord(incidents.by_severity) ?? {};
+
+  const locks = asRecord(sections.locks) ?? {};
+  const lockSample = asArray(locks.sample);
+
+  const recentEvents = asArray(sections.recent_events);
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
-      {state.errorMessage ? <ControlTowerErrorState message={state.errorMessage} onRetry={load} /> : null}
+      {state.errorMessage ? <p style={{ margin: 0, color: "#b91c1c" }}>{state.errorMessage}</p> : null}
 
-      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
-        <ControlTowerSection title="WIP Summary">
-          <SummaryList source={data.wip_summary ?? data.wip} />
-        </ControlTowerSection>
-
-        <ControlTowerSection title="Drying Risk Summary">
-          <SummaryList source={data.drying_risk_summary ?? data.drying_risk} />
-        </ControlTowerSection>
-
-        <ControlTowerSection title="Station Load Summary">
-          <SummaryList source={data.station_load_summary ?? data.station_load} />
-        </ControlTowerSection>
-
-        <ControlTowerSection title="Recent Events">
-          {recentEvents.length === 0 ? (
-            <p style={{ margin: 0, color: "#666" }}>No data yet.</p>
+      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+        <Section title="Deficit">
+          <p style={{ margin: "0 0 8px" }}>
+            <strong>Total missing qty:</strong> {formatNumber(deficit.total_missing_qty)}
+          </p>
+          {topShort.length === 0 ? (
+            <EmptyState message="No short SKUs right now." />
           ) : (
             <ol style={{ margin: 0, paddingLeft: 18 }}>
-              {recentEvents.map((event, index) => (
-                <li key={`${String(event.id ?? event.at ?? index)}-${index}`}>
-                  <strong>{String(event.type ?? event.name ?? "—")}</strong> — {formatDate(event.at ?? event.time)} —{" "}
-                  {String(event.message ?? event.batch_code ?? event.station ?? "—")}
-                  {typeof event.count === "number" ? ` (${formatNumber(event.count)})` : ""}
+              {topShort.map((item, idx) => (
+                <li key={`${String(item.sku_id ?? idx)}-${idx}`}>
+                  {String(item.sku_id ?? "—")}: {formatNumber(item.missing_qty)}
                 </li>
               ))}
             </ol>
           )}
-        </ControlTowerSection>
+        </Section>
 
-        <ControlTowerSection title="Assembly Intelligence">
+        <Section title="Shipments Readiness">
+          {shipmentsReadiness.length === 0 ? (
+            <EmptyState message="No shipments in readiness queue." />
+          ) : (
+            <ol style={{ margin: 0, paddingLeft: 18 }}>
+              {shipmentsReadiness.map((item, idx) => (
+                <li key={`${String(item.shipment_id ?? idx)}-${idx}`}>
+                  {String(item.shipment_id ?? "—")}: {formatNumber(item.readiness_percent)}% ({String(item.status ?? "—")})
+                </li>
+              ))}
+            </ol>
+          )}
+        </Section>
+
+        <Section title="Inventory">
+          <p style={{ margin: "0 0 8px" }}>
+            <strong>updated_at_max:</strong> {formatDate(inventory.updated_at_max)}
+          </p>
+          <p style={{ margin: "0 0 6px" }}>
+            <strong>Top available:</strong>
+          </p>
+          {topAvailable.length === 0 ? (
+            <EmptyState message="No available inventory records." />
+          ) : (
+            <ul style={{ margin: "0 0 10px", paddingLeft: 18 }}>
+              {topAvailable.map((item, idx) => (
+                <li key={`${String(item.sku_id ?? idx)}-${idx}`}>
+                  {String(item.sku_id ?? "—")} @ {String(item.location_id ?? "—")} — {formatNumber(item.available_qty)}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p style={{ margin: "0 0 6px" }}>
+            <strong>Low stock (≤ 5):</strong>
+          </p>
+          {lowStock.length === 0 ? (
+            <EmptyState message="No low stock items." />
+          ) : (
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {lowStock.map((item, idx) => (
+                <li key={`${String(item.sku_id ?? idx)}-low-${idx}`}>
+                  {String(item.sku_id ?? "—")} @ {String(item.location_id ?? "—")} — {formatNumber(item.available_qty)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+
+        <Section title="Picking">
+          <p style={{ margin: "0 0 6px" }}>
+            <strong>Open lists:</strong> {formatNumber(picking.open_lists)}
+          </p>
+          <p style={{ margin: "0 0 6px" }}>
+            <strong>Open lines:</strong> {formatNumber(picking.open_lines)}
+          </p>
           <p style={{ margin: 0 }}>
-            <strong>zero_available_sets</strong>: {formatNumber(assemblyIntelligence.zero_available_sets)}
+            <strong>Last created:</strong> {formatDate(picking.last_created_at)}
           </p>
-          <p style={{ margin: "8px 0 0" }}>
-            <strong>availability_stats</strong>: min {formatNumber(availabilityStats.min)}, median{" "}
-            {formatNumber(availabilityStats.median)}, max {formatNumber(availabilityStats.max)}
-          </p>
-          <div style={{ marginTop: 8 }}>
-            <strong>top_bottlenecks</strong>
-            {topBottlenecks.length === 0 ? (
-              <p style={{ margin: "6px 0 0", color: "#666" }}>No data yet.</p>
-            ) : (
-              <ol style={{ margin: "6px 0 0", paddingLeft: 18 }}>
-                {topBottlenecks.map((item, index) => (
-                  <li key={`${String(item.component_sku ?? index)}-${index}`}>
-                    {String(item.component_sku ?? "—")}: {formatNumber(item.count)}
-                  </li>
-                ))}
-              </ol>
-            )}
-          </div>
-        </ControlTowerSection>
+        </Section>
 
-        <ControlTowerSection title="Deficit">
-          <p style={{ margin: 0, color: "#374151" }}>Track shortage KPI and incidents in the dedicated page.</p>
-          {deficitSummary ? (
-            <p style={{ margin: "8px 0 0" }}>
-              <strong>total_missing_qty</strong>: {formatNumber(deficitSummary.total_missing_qty)} · <strong>open_incidents</strong>: {" "}
-              {formatNumber(deficitSummary.open_incidents)}
-            </p>
-          ) : null}
-          <p style={{ margin: "10px 0 0" }}>
-            <Link href="/kpi/deficit">Open Deficit KPI</Link>
+        <Section title="Incidents">
+          <p style={{ margin: "0 0 8px" }}>
+            <strong>Open total:</strong> {formatNumber(incidents.open_total)}
           </p>
-        </ControlTowerSection>
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            <li>low: {formatNumber(bySeverity.low)}</li>
+            <li>medium: {formatNumber(bySeverity.medium)}</li>
+            <li>high: {formatNumber(bySeverity.high)}</li>
+            <li>critical: {formatNumber(bySeverity.critical)}</li>
+          </ul>
+        </Section>
+
+        <Section title="Locks">
+          <p style={{ margin: "0 0 8px" }}>
+            <strong>Active total:</strong> {formatNumber(locks.active_total)}
+          </p>
+          {lockSample.length === 0 ? (
+            <EmptyState message="No active locks." />
+          ) : (
+            <ol style={{ margin: 0, paddingLeft: 18 }}>
+              {lockSample.map((item, idx) => (
+                <li key={`${String(item.lock_key ?? idx)}-${idx}`}>
+                  {String(item.lock_key ?? "—")} ({String(item.entity_type ?? "—")}/{String(item.entity_id ?? "—")})
+                </li>
+              ))}
+            </ol>
+          )}
+        </Section>
+
+        <Section title="Recent events">
+          {recentEvents.length === 0 ? (
+            <EmptyState message="No recent events." />
+          ) : (
+            <ol style={{ margin: 0, paddingLeft: 18 }}>
+              {recentEvents.map((item, idx) => (
+                <li key={`${String(item.event_id ?? idx)}-${idx}`}>
+                  {String(item.event_type ?? "—")} — {String(item.entity_type ?? "—")}:{String(item.entity_id ?? "—")} —{" "}
+                  {formatDate(item.created_at)}
+                </li>
+              ))}
+            </ol>
+          )}
+        </Section>
       </div>
     </div>
   );
