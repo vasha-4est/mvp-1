@@ -8,7 +8,15 @@
   const VERSION = 'v1';
   const SHEET_CANDIDATES = ['kpi_daily', 'scenario_state'];
 
-  Actions_.register_(ACTION_WRITE, (ctx) => {
+  Actions_.register_(ACTION_WRITE, upsert_);
+  Actions_.register_(ACTION_READ, get_);
+
+  function upsert_(ctx) {
+    if (typeof Actions_ === 'undefined') {
+      throw new Error('Actions_ registry not available');
+    }
+    if (!ctx) throw new Error('ctx missing');
+
     Validate_.requireFlag_(ctx.flags, FLAG.PHASE_A_CORE);
 
     const payload = (ctx && ctx.payload) ? ctx.payload : {};
@@ -19,7 +27,7 @@
     const coreSelection = selectCoreSources_(ctx, payload);
     const coresOverride = normalizeCoresOverride_(payload.cores_override);
 
-    withScriptLock_(lockKey, function () {
+    return withScriptLock_(lockKey, function () {
       const sh = resolveTargetSheet_();
       const existing = findExisting_(sh, snapshotDate, tz);
       if (existing) {
@@ -39,19 +47,26 @@
         );
       }
 
+      const diagnostics = { cores: [] };
+
       const daily = coresOverride.valid
         ? overriddenCore_('daily_summary', 'daily.summary.get', coresOverride.daily_summary)
-        : (coreSelection.selected_core_keys.indexOf('daily_summary') >= 0
-          ? executeSource_(ctx, 'daily_summary', 'daily.summary.get', {
-              days: Math.max(1, daysWindow),
-              tz: tz,
-            }, true)
-          : skippedCore_('daily_summary', coreSelection.disabled_reasons));
+        : collectCore_('daily_summary', 'daily.summary.get', {
+            requestId: 'eod-core-daily-' + uuid_(),
+            payload: { days: Math.max(1, daysWindow), tz: tz },
+            actor: ctx.actor,
+            flags: ctx.flags,
+          }, diagnostics);
+
       const tower = coresOverride.valid
         ? overriddenCore_('control_tower', 'control_tower.read', coresOverride.control_tower)
-        : (coreSelection.selected_core_keys.indexOf('control_tower') >= 0
-          ? executeSource_(ctx, 'control_tower', 'control_tower.read', {}, true)
-          : skippedCore_('control_tower', coreSelection.disabled_reasons));
+        : collectCore_('control_tower', 'control_tower.read', {
+            requestId: 'eod-core-tower-' + uuid_(),
+            payload: {},
+            actor: ctx.actor,
+            flags: ctx.flags,
+          }, diagnostics);
+
       const throughput = executeSource_(ctx, 'throughput', 'kpi.throughput.get', { days: 1 }, false);
       const throughputShifts = executeSource_(ctx, 'throughput_shifts', 'kpi.throughput.shifts.get', { days: 1, tz: tz }, false);
       const shipmentSla = executeSource_(ctx, 'shipment_sla', 'kpi.shipment.sla.get', { days: 1, tz: tz, sla_hours: 24 }, false);
@@ -66,7 +81,7 @@
             disabled_reasons: coreSelection.disabled_reasons,
             evaluated_flags: coreSelection.evaluated_flags,
             used_override: coresOverride.valid,
-            cores: [toErrorCore_(daily), toErrorCore_(tower)],
+            cores: diagnostics.cores.length ? diagnostics.cores : [toErrorCore_(daily), toErrorCore_(tower)],
           })
         );
       }
@@ -79,6 +94,7 @@
         disabled_reasons: coreSelection.disabled_reasons,
         evaluated_flags: coreSelection.evaluated_flags,
         used_override: coresOverride.valid,
+        core_attempts: diagnostics.cores,
       });
 
       const generatedAt = nowIso_();
@@ -98,9 +114,9 @@
       appendByHeader_(sh, row);
       return buildResponse_(row, summary, false);
     });
-  });
+  }
 
-  Actions_.register_(ACTION_READ, (ctx) => {
+  function get_(ctx) {
     Validate_.requireFlag_(ctx.flags, FLAG.PHASE_A_CORE);
 
     const payload = (ctx && ctx.payload) ? ctx.payload : {};
@@ -114,7 +130,8 @@
     }
 
     return buildResponse_(existing.row, parsePayloadJson_(existing.row.payload_json), true);
-  });
+  }
+
 
 
   function selectCoreSources_(ctx, payload) {
@@ -289,6 +306,90 @@
     }
   }
 
+
+  function collectCore_(key, actionName, callCtx, diagnostics) {
+    const entry = {
+      key: key,
+      action: actionName,
+      attempt_started: true,
+      ts_start: nowIso_(),
+      attempt_finished: false,
+      success: false,
+      status: 502,
+      code: 'BAD_GATEWAY',
+      error: '',
+      rid: asString_(callCtx && callCtx.requestId),
+      ms: 0,
+    };
+
+    diagnostics.cores.push(entry);
+
+    const startedAt = new Date().getTime();
+    try {
+      const result = Actions_.dispatch_(actionName, callCtx);
+      entry.ms = new Date().getTime() - startedAt;
+      entry.attempt_finished = true;
+      if (result === null || result === undefined) {
+        entry.success = false;
+        entry.error = 'dispatch returned null or undefined';
+        return {
+          ok: false,
+          key: key,
+          action: actionName,
+          status: 502,
+          code: 'BAD_GATEWAY',
+          error: entry.error,
+          rid: entry.rid,
+          ms: entry.ms,
+          attempts: 1,
+          data: null,
+          attempt_started: true,
+          attempt_finished: true,
+        };
+      }
+
+      entry.success = true;
+      entry.status = 200;
+      entry.code = 'OK';
+      return {
+        ok: true,
+        key: key,
+        action: actionName,
+        status: 200,
+        code: 'OK',
+        error: '',
+        rid: entry.rid,
+        ms: entry.ms,
+        attempts: 1,
+        data: result,
+        attempt_started: true,
+        attempt_finished: true,
+      };
+    } catch (err) {
+      const parsed = parseError_(err);
+      entry.ms = new Date().getTime() - startedAt;
+      entry.attempt_finished = true;
+      entry.success = false;
+      entry.code = parsed.code || 'BAD_GATEWAY';
+      entry.error = parsed.error || 'dispatch failed';
+      entry.status = entry.code === 'LOCK_CONFLICT' ? 503 : 502;
+      return {
+        ok: false,
+        key: key,
+        action: actionName,
+        status: entry.status,
+        code: entry.code,
+        error: entry.error,
+        rid: entry.rid,
+        ms: entry.ms,
+        attempts: 1,
+        data: null,
+        attempt_started: true,
+        attempt_finished: true,
+      };
+    }
+  }
+
   function executeSource_(parentCtx, key, action, payload, isCore) {
     const RETRIES = 3;
     const backoffMs = [300, 700];
@@ -435,6 +536,7 @@
       disabled_reasons: sourceStatus.disabled_reasons || [],
       evaluated_flags: sourceStatus.evaluated_flags || {},
       used_override: !!sourceStatus.used_override,
+      core_attempts: Array.isArray(sourceStatus.core_attempts) ? sourceStatus.core_attempts : [],
       errors: partialErrors,
     };
   }
@@ -447,7 +549,10 @@
       snapshot_date: asString_(row.snapshot_date),
       replayed: replayed,
       snapshot_id: asString_(row.snapshot_id),
-      meta: { used_override: !!(snapshotPayload && snapshotPayload.used_override) },
+      meta: {
+        used_override: !!(snapshotPayload && snapshotPayload.used_override),
+        core_attempts: Array.isArray(snapshotPayload && snapshotPayload.core_attempts) ? snapshotPayload.core_attempts.length : 0,
+      },
       details: buildResponseDetails_(snapshotPayload),
       snapshot: snapshotPayload || {
         date: asString_(row.snapshot_date),
