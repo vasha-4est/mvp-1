@@ -31,6 +31,7 @@
     const payload = ctx.payload || {};
     const entityType = str_(payload.entity_type);
     const entityId = str_(payload.entity_id);
+    const reason = str_(payload.reason);
     const ttlRaw = Number(payload.ttl_seconds);
     const ttlSeconds = Number.isFinite(ttlRaw) && ttlRaw > 0 ? Math.floor(ttlRaw) : DEFAULT_TTL_SECONDS;
     const action = 'locks.acquire';
@@ -80,11 +81,12 @@
       return '';
     }));
 
-    appendLockEvent_(ctx, 'lock_acquired', lockKey, entityType, entityId, {
+    appendLockEvent_(ctx, 'locks.acquire', lockKey, entityType, entityId, {
       lock_key: lockKey,
       entity_type: entityType,
       entity_id: entityId,
       ttl_seconds: ttlSeconds,
+      reason,
       expires_at: expiresAt,
       held_by_user_id: actorUserId_(ctx),
       held_by_role_id: actorRoleId_(ctx),
@@ -141,7 +143,7 @@
     }
 
     if (changed) {
-      appendLockEvent_(ctx, 'lock_released', lockKey, str_(match.row.entity_type), str_(match.row.entity_id), {
+      appendLockEvent_(ctx, 'locks.release', lockKey, str_(match.row.entity_type), str_(match.row.entity_id), {
         lock_key: lockKey,
         entity_type: str_(match.row.entity_type),
         entity_id: str_(match.row.entity_id),
@@ -157,7 +159,7 @@
   Actions_.register_('locks.override', (ctx) => {
     const payload = ctx.payload || {};
     const lockKey = str_(payload.lock_key);
-    const reason = str_(payload.reason);
+    const reason = str_(payload.reason || payload.override_reason);
     const action = 'locks.override';
 
     if (actorRoleId_(ctx).toLowerCase() !== ROLE.OWNER) {
@@ -194,7 +196,7 @@
       lockSheet.getRange(match.rowNumber, 1, 1, lockHeader.length).setValues([nextRow]);
       changed = true;
 
-      appendLockEvent_(ctx, 'lock_overridden', lockKey, str_(match.row.entity_type), str_(match.row.entity_id), {
+      appendLockEvent_(ctx, 'locks.override', lockKey, str_(match.row.entity_type), str_(match.row.entity_id), {
         lock_key: lockKey,
         entity_type: str_(match.row.entity_type),
         entity_id: str_(match.row.entity_id),
@@ -340,7 +342,7 @@
   }
 
   function replayAcquire_(requestId, entityType, entityId, ttlSeconds) {
-    const payload = eventPayloadByRequest_(requestId, 'lock_acquired');
+    const payload = eventPayloadByRequest_(requestId, 'locks.acquire');
     if (payload) {
       return {
         lock_key: str_(payload.lock_key),
@@ -361,7 +363,7 @@
   }
 
   function replayReleaseOrOverride_(requestId, fallbackLockKey) {
-    const payload = eventPayloadByRequest_(requestId, 'lock_released') || eventPayloadByRequest_(requestId, 'lock_overridden');
+    const payload = eventPayloadByRequest_(requestId, 'locks.release') || eventPayloadByRequest_(requestId, 'locks.override');
     return {
       lock_key: payload ? str_(payload.lock_key) : fallbackLockKey,
       changed: payload ? true : false,
@@ -388,26 +390,32 @@
     return null;
   }
 
-  function appendLockEvent_(ctx, eventType, lockKey, entityType, entityId, payload, createdAt) {
-    Db_.append_(SHEET.EVENTS, {
-      event_id: uuid_(),
-      event_type: eventType,
+  function appendLockEvent_(ctx, action, lockKey, entityType, entityId, payload, createdAt) {
+    const reason = str_(payload && payload.reason);
+    Audit_.logMutation({
+      ctx,
+      action,
+      event_type: action,
       entity_type: entityType,
       entity_id: entityId,
-      payload: '',
-      created_at: createdAt || nowIso_(),
-      actor_user_id: actorUserId_(ctx),
-      actor_role_id: actorRoleId_(ctx),
+      request_id: str_(ctx.requestId),
+      source: SOURCE,
       required_proof: '',
       proof_ref: '',
-      source: SOURCE,
-      request_id: str_(ctx.requestId),
-      payload_json: JSON.stringify({
+      reason,
+      created_at: createdAt || nowIso_(),
+      diff_or_effect: payload || {},
+      payload_json: {
         lock_key: lockKey,
         actor_user_id: actorUserId_(ctx),
         actor_role_id: actorRoleId_(ctx),
-        ...payload,
-      }),
+        ...(payload || {}),
+        action,
+        entity_type: entityType,
+        entity_id: entityId,
+        request_id: str_(ctx.requestId),
+        ...(reason ? { reason } : {}),
+      },
     });
   }
 

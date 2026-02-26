@@ -108,7 +108,7 @@
         created_at: movedAt,
       });
 
-      appendEvent_('inventory_move', 'inventory_move', moveId, {
+      appendEvent_('inventory.move', 'inventory_move', moveId, {
         sku_id: skuId,
         from_location_id: fromLocationId,
         to_location_id: toLocationId,
@@ -168,7 +168,7 @@
       const nextVersionId = updateBalanceRow_(row, row.onHandQty, nextReservedQty, updatedAt);
       const nextAvailableQty = row.onHandQty - nextReservedQty;
 
-      appendEvent_('inventory_reserved', 'inventory_balance', skuId + '::' + locationId, {
+      appendEvent_('inventory.reserve', 'inventory_balance', skuId + '::' + locationId, {
         operation_id: operationId,
         reservation_id: operationId,
         sku_id: skuId,
@@ -233,7 +233,7 @@
       const nextVersionId = updateBalanceRow_(row, row.onHandQty, nextReservedQty, updatedAt);
       const nextAvailableQty = row.onHandQty - nextReservedQty;
 
-      appendEvent_('inventory_released', 'inventory_balance', skuId + '::' + locationId, {
+      appendEvent_('inventory.release', 'inventory_balance', skuId + '::' + locationId, {
         operation_id: operationId,
         release_id: operationId,
         sku_id: skuId,
@@ -385,7 +385,7 @@
   function replayMoveId_(requestId) {
     const req = str_(requestId);
     if (!req) return '';
-    const rows = Db_.query_(SHEET.EVENTS, (row) => str_(row.request_id) === req && str_(row.event_type) === 'inventory_move');
+    const rows = Db_.query_(SHEET.EVENTS, (row) => str_(row.request_id) === req && str_(row.event_type) === 'inventory.move');
     if (rows.length === 0) return '';
     return str_(rows[0].entity_id);
   }
@@ -396,7 +396,7 @@
   }
 
   function replayReserveResponse_(requestId, reservationId, skuId, locationId, qty) {
-    const payload = findInventoryEventPayload_(requestId, 'inventory_reserved');
+    const payload = findInventoryEventPayload_(requestId, 'inventory.reserve');
     if (payload) {
       return {
         ok: true,
@@ -431,7 +431,7 @@
   }
 
   function replayReleaseResponse_(requestId, releaseId, skuId, locationId, qty) {
-    const payload = findInventoryEventPayload_(requestId, 'inventory_released');
+    const payload = findInventoryEventPayload_(requestId, 'inventory.release');
     if (payload) {
       return {
         ok: true,
@@ -646,21 +646,29 @@
     return str_(skuId) + '::' + str_(locationId);
   }
 
-  function appendEvent_(eventType, entityType, entityId, payload, createdAt, ctx) {
-    Db_.append_(SHEET.EVENTS, {
-      event_id: uuid_(),
-      event_type: eventType,
+  function appendEvent_(action, entityType, entityId, payload, createdAt, ctx) {
+    const reason = str_(payload && payload.reason);
+    Audit_.logMutation({
+      ctx,
+      action,
+      event_type: action,
       entity_type: entityType,
       entity_id: entityId,
-      payload: '',
-      created_at: createdAt,
-      actor_user_id: actorUserId_(ctx),
-      actor_role_id: actorRoleId_(ctx),
-      required_proof: '',
-      proof_ref: str_(payload.proof_ref),
-      source: WEBAPP_SOURCE,
       request_id: str_(ctx.requestId),
-      payload_json: JSON.stringify(payload || {}),
+      source: WEBAPP_SOURCE,
+      required_proof: '',
+      proof_ref: str_(payload && payload.proof_ref),
+      reason,
+      created_at: createdAt,
+      diff_or_effect: payload || {},
+      payload_json: {
+        ...(payload || {}),
+        action,
+        entity_type: entityType,
+        entity_id: entityId,
+        request_id: str_(ctx.requestId),
+        ...(reason ? { reason } : {}),
+      },
     });
   }
 

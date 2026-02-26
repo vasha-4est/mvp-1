@@ -5,7 +5,7 @@ import { callGas } from "@/lib/integrations/gasClient";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { requireAuth } from "@/lib/server/guards";
 
-type Body = { entity_type?: unknown; entity_id?: unknown; ttl_seconds?: unknown };
+type Body = { entity_type?: unknown; entity_id?: unknown; ttl_seconds?: unknown; reason?: unknown };
 type AcquireResponse = {
   lock_key?: unknown;
   entity_type?: unknown;
@@ -54,6 +54,7 @@ export async function POST(request: Request) {
   const payload = {
     entity_type: entityType,
     entity_id: entityId,
+    reason: str(body.reason),
     ...(Number.isFinite(ttlRaw) && ttlRaw > 0 ? { ttl_seconds: Math.floor(ttlRaw) } : {}),
   };
 
