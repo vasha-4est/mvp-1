@@ -271,7 +271,7 @@
         }
       }
 
-      appendPickingEvent_(ctx, 'picking_confirmed', 'picking_line', lockEntityId, {
+      appendPickingEvent_(ctx, 'picking.confirm', 'picking_line', lockEntityId, {
         picking_list_id: pickingListId,
         line_id: lineId,
         sku_id: String(lineRow.valueByColumn('sku_id') || '').trim(),
@@ -409,7 +409,7 @@
 
     for (let i = 0; i < rows.length; i++) {
       if (String(rows[i][idx.request_id] || '').trim() !== requestId) continue;
-      if (String(rows[i][idx.event_type] || '').trim() !== 'picking_confirmed') continue;
+      if (String(rows[i][idx.event_type] || '').trim() !== 'picking.confirm') continue;
       const payload = parseJsonSafe_(rows[i][idx.payload_json]) || {};
       const plannedQty = numberOrZero_(payload.planned_qty);
       const qtyDone = numberOrZero_(payload.qty_done);
@@ -682,21 +682,29 @@
     return rows.length > 0;
   }
 
-  function appendPickingEvent_(ctx, eventType, entityType, entityId, payload, createdAt) {
-    Db_.append_(SHEET.EVENTS, {
-      event_id: uuid_(),
-      event_type: eventType,
+  function appendPickingEvent_(ctx, action, entityType, entityId, payload, createdAt) {
+    const reason = String(payload && payload.short_reason ? payload.short_reason : '').trim();
+    Audit_.logMutation({
+      ctx,
+      action,
+      event_type: action,
       entity_type: entityType,
       entity_id: entityId,
-      payload: '',
-      created_at: createdAt,
-      actor_user_id: ctx && ctx.actor && ctx.actor.employee_id ? String(ctx.actor.employee_id).trim() : '',
-      actor_role_id: ctx && ctx.actor && ctx.actor.role ? String(ctx.actor.role).trim() : '',
-      required_proof: '',
-      proof_ref: '',
-      source: WEBAPP_SOURCE,
       request_id: String(ctx && ctx.requestId ? ctx.requestId : '').trim(),
-      payload_json: JSON.stringify(payload || {}),
+      source: WEBAPP_SOURCE,
+      required_proof: '',
+      proof_ref: String(payload && payload.proof_ref ? payload.proof_ref : '').trim(),
+      reason,
+      created_at: createdAt,
+      diff_or_effect: payload || {},
+      payload_json: {
+        ...(payload || {}),
+        action,
+        entity_type: entityType,
+        entity_id: entityId,
+        request_id: String(ctx && ctx.requestId ? ctx.requestId : '').trim(),
+        ...(reason ? { reason } : {}),
+      },
     });
   }
 

@@ -5,7 +5,7 @@ import { callGas } from "@/lib/integrations/gasClient";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { requireOwner } from "@/lib/server/guards";
 
-type Body = { lock_key?: unknown; reason?: unknown };
+type Body = { lock_key?: unknown; reason?: unknown; override_reason?: unknown };
 type OverrideResponse = { lock_key?: unknown; changed?: unknown; replayed?: unknown };
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
@@ -38,7 +38,10 @@ export async function POST(request: Request) {
     return json(requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: "Invalid JSON body" });
   }
 
-  const gas = await callGas<OverrideResponse>("locks.override", { lock_key: str(body.lock_key), reason: str(body.reason) }, requestId);
+  const reason = str(body.reason) || str(body.override_reason);
+  if (!reason) return json(requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: "reason is required" });
+
+  const gas = await callGas<OverrideResponse>("locks.override", { lock_key: str(body.lock_key), reason }, requestId);
   if (!gas.ok || !gas.data) return mapError(requestId, (gas as { error?: unknown }).error);
 
   const replayed = gas.data.replayed === true;
