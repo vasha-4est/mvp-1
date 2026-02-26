@@ -25,14 +25,14 @@
         return buildResponse_(existing.row, existingPayload, true);
       }
 
-      const daily = executeSource_('daily_summary', 'daily.summary.get', {
+      const daily = executeSource_(ctx, 'daily_summary', 'daily.summary.get', {
         days: Math.max(1, daysWindow),
         tz: tz,
       }, true);
-      const tower = executeSource_('control_tower', 'control_tower.read', {}, true);
-      const throughput = executeSource_('throughput', 'kpi.throughput.get', { days: 1 }, false);
-      const throughputShifts = executeSource_('throughput_shifts', 'kpi.throughput.shifts.get', { days: 1, tz: tz }, false);
-      const shipmentSla = executeSource_('shipment_sla', 'kpi.shipment.sla.get', { days: 1, tz: tz, sla_hours: 24 }, false);
+      const tower = executeSource_(ctx, 'control_tower', 'control_tower.read', {}, true);
+      const throughput = executeSource_(ctx, 'throughput', 'kpi.throughput.get', { days: 1 }, false);
+      const throughputShifts = executeSource_(ctx, 'throughput_shifts', 'kpi.throughput.shifts.get', { days: 1, tz: tz }, false);
+      const shipmentSla = executeSource_(ctx, 'shipment_sla', 'kpi.shipment.sla.get', { days: 1, tz: tz, sla_hours: 24 }, false);
 
       if (!daily.ok && !tower.ok) {
         throw new Error(
@@ -186,7 +186,7 @@
     }
   }
 
-  function executeSource_(key, action, payload, isCore) {
+  function executeSource_(parentCtx, key, action, payload, isCore) {
     const RETRIES = 3;
     const backoffMs = [300, 700];
     let last = { ok: false, key: key, action: action, status: 502, code: 'BAD_GATEWAY', error: 'upstream unavailable', ms: 0, rid: '', data: null, attempts: 1, isCore: isCore };
@@ -195,9 +195,11 @@
       const started = new Date().getTime();
       const rid = 'eod-src-' + key + '-' + uuid_();
       try {
-        const data = Dispatch_.run_(action, payload || {}, {
-          role_id: ROLE.OWNER,
-          request_id: rid,
+        const data = Actions_.dispatch_(action, {
+          requestId: rid,
+          payload: payload || {},
+          actor: parentCtx && parentCtx.actor ? parentCtx.actor : { role_id: ROLE.OWNER },
+          flags: parentCtx && parentCtx.flags ? parentCtx.flags : Flags_.load_(),
         });
         return {
           ok: true,

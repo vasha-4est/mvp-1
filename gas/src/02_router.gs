@@ -166,6 +166,9 @@ function parseErrorFromMessage_(message) {
     CONTROL_MODEL_SHEET_INVALID: true,
     INVALID_PRODUCTS_SKU_SCHEMA: true,
     INTERNAL_ERROR: true,
+    BAD_GATEWAY: true,
+    LOCK_TIMEOUT: true,
+    SERVICE_UNAVAILABLE: true,
   };
 
   if (match && passthroughCodes[match[1]] === true) {
