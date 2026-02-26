@@ -22,6 +22,7 @@ const LINKS = [
   { href: "/kpi/deficit", label: "Deficit KPI" },
   { href: "/kpi/throughput", label: "Throughput KPI" },
   { href: "/shipments/readiness", label: "Shipments" },
+  { href: "/daily/summary", label: "Daily Summary" },
 ] as const;
 
 export default function AppTopNav() {
