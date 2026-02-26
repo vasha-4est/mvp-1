@@ -21,6 +21,7 @@ const LINKS = [
   { href: "/control-tower", label: "Control Tower" },
   { href: "/kpi/deficit", label: "Deficit KPI" },
   { href: "/shipments/readiness", label: "Shipments" },
+  { href: "/daily/summary", label: "Daily Summary" },
 ] as const;
 
 export default function AppTopNav() {
