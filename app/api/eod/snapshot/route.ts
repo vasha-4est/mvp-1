@@ -54,6 +54,34 @@ function extractCoreDetails(details: unknown): UpstreamAttemptError[] {
   return cores.map(asAttemptError).filter((item): item is UpstreamAttemptError => item !== null);
 }
 
+
+function ensureNonEmptyCoreDetails(details: unknown): UpstreamAttemptError[] {
+  const cores = extractCoreDetails(details);
+  if (cores.length > 0) return cores;
+
+  const fallback = [
+    { key: "daily_summary", status: 502, code: "BAD_GATEWAY", error: "core result missing" },
+    { key: "control_tower", status: 502, code: "BAD_GATEWAY", error: "core result missing" },
+  ];
+  return fallback;
+}
+
+function extractSelectionDiagnostics(details: unknown) {
+  if (!details || typeof details !== "object" || Array.isArray(details)) {
+    return { selected_core_keys: ["daily_summary", "control_tower"], disabled_reasons: [], evaluated_flags: {} };
+  }
+
+  const obj = details as { selected_core_keys?: unknown; disabled_reasons?: unknown; evaluated_flags?: unknown };
+  return {
+    selected_core_keys: Array.isArray(obj.selected_core_keys) ? obj.selected_core_keys : ["daily_summary", "control_tower"],
+    disabled_reasons: Array.isArray(obj.disabled_reasons) ? obj.disabled_reasons : [],
+    evaluated_flags:
+      obj.evaluated_flags && typeof obj.evaluated_flags === "object" && !Array.isArray(obj.evaluated_flags)
+        ? obj.evaluated_flags
+        : {},
+  };
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -156,8 +184,27 @@ export async function POST(request: Request) {
   });
 
   if (result.ok === false) {
+    if (result.error.code === "EOD_NO_CORE_SOURCES") {
+      const diagnostics = extractSelectionDiagnostics(result.error.details);
+      return json(auth.requestId, 400, {
+        ok: false,
+        code: "EOD_NO_CORE_SOURCES",
+        error: "no core sources selected",
+        request_id: auth.requestId,
+        details: {
+          date,
+          tz,
+          attempts: result.attempts,
+          selected_core_keys: diagnostics.selected_core_keys,
+          disabled_reasons: diagnostics.disabled_reasons,
+          evaluated_flags: diagnostics.evaluated_flags,
+        },
+      });
+    }
+
     if (isCoreOutageError(result.error.code, result.error.error)) {
-      const cores = extractCoreDetails(result.error.details);
+      const cores = ensureNonEmptyCoreDetails(result.error.details);
+      const diagnostics = extractSelectionDiagnostics(result.error.details);
       return json(auth.requestId, 502, {
         ok: false,
         code: "BAD_GATEWAY",
@@ -168,6 +215,9 @@ export async function POST(request: Request) {
           tz,
           attempts: result.attempts,
           cores,
+          selected_core_keys: diagnostics.selected_core_keys,
+          disabled_reasons: diagnostics.disabled_reasons,
+          evaluated_flags: diagnostics.evaluated_flags,
         },
       });
     }
@@ -192,8 +242,18 @@ export async function POST(request: Request) {
     });
   }
 
+  const diagnostics = extractSelectionDiagnostics((result.data as { details?: unknown }).details);
+  const cores = ensureNonEmptyCoreDetails((result.data as { details?: unknown }).details);
+
   return json(auth.requestId, result.status, {
     ...result.data,
+    details: {
+      ...(result.data as { details?: Record<string, unknown> }).details,
+      cores,
+      selected_core_keys: diagnostics.selected_core_keys,
+      disabled_reasons: diagnostics.disabled_reasons,
+      evaluated_flags: diagnostics.evaluated_flags,
+    },
     request_id: auth.requestId,
   });
 }

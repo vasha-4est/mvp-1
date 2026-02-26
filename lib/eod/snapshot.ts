@@ -9,6 +9,12 @@ export type EodSnapshotPayload = {
   date?: string;
   replayed: boolean;
   snapshot_id: string;
+  details?: {
+    cores?: Array<{ key?: string; status?: number; code?: string; error?: string; ms?: number; rid?: string }>;
+    selected_core_keys?: string[];
+    disabled_reasons?: string[];
+    evaluated_flags?: Record<string, unknown>;
+  };
   snapshot: {
     headline: {
       deficit_total_missing_qty: number;

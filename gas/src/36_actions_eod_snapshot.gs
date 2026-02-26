@@ -16,6 +16,7 @@
     const daysWindow = normalizeDaysWindow_(payload.days_window);
     const snapshotDate = normalizeSnapshotDate_(payload.date, tz);
     const lockKey = 'eod:snapshot:' + snapshotDate + ':' + tz;
+    const coreSelection = selectCoreSources_(ctx, payload);
 
     withScriptLock_(lockKey, function () {
       const sh = resolveTargetSheet_();
@@ -25,11 +26,27 @@
         return buildResponse_(existing.row, existingPayload, true);
       }
 
-      const daily = executeSource_(ctx, 'daily_summary', 'daily.summary.get', {
-        days: Math.max(1, daysWindow),
-        tz: tz,
-      }, true);
-      const tower = executeSource_(ctx, 'control_tower', 'control_tower.read', {}, true);
+      if (coreSelection.selected_core_keys.length === 0) {
+        throw new Error(
+          'EOD_NO_CORE_SOURCES: no core sources selected | ' + JSON.stringify({
+            date: snapshotDate,
+            tz: tz,
+            selected_core_keys: coreSelection.selected_core_keys,
+            disabled_reasons: coreSelection.disabled_reasons,
+            evaluated_flags: coreSelection.evaluated_flags,
+          })
+        );
+      }
+
+      const daily = coreSelection.selected_core_keys.indexOf('daily_summary') >= 0
+        ? executeSource_(ctx, 'daily_summary', 'daily.summary.get', {
+            days: Math.max(1, daysWindow),
+            tz: tz,
+          }, true)
+        : skippedCore_('daily_summary', coreSelection.disabled_reasons);
+      const tower = coreSelection.selected_core_keys.indexOf('control_tower') >= 0
+        ? executeSource_(ctx, 'control_tower', 'control_tower.read', {}, true)
+        : skippedCore_('control_tower', coreSelection.disabled_reasons);
       const throughput = executeSource_(ctx, 'throughput', 'kpi.throughput.get', { days: 1 }, false);
       const throughputShifts = executeSource_(ctx, 'throughput_shifts', 'kpi.throughput.shifts.get', { days: 1, tz: tz }, false);
       const shipmentSla = executeSource_(ctx, 'shipment_sla', 'kpi.shipment.sla.get', { days: 1, tz: tz, sla_hours: 24 }, false);
@@ -40,6 +57,9 @@
             date: snapshotDate,
             tz: tz,
             attempts: Math.max(num_(daily.attempts), num_(tower.attempts)),
+            selected_core_keys: coreSelection.selected_core_keys,
+            disabled_reasons: coreSelection.disabled_reasons,
+            evaluated_flags: coreSelection.evaluated_flags,
             cores: [toErrorCore_(daily), toErrorCore_(tower)],
           })
         );
@@ -49,6 +69,9 @@
         daily: daily,
         tower: tower,
         optional: [throughput, throughputShifts, shipmentSla],
+        selected_core_keys: coreSelection.selected_core_keys,
+        disabled_reasons: coreSelection.disabled_reasons,
+        evaluated_flags: coreSelection.evaluated_flags,
       });
 
       const generatedAt = nowIso_();
@@ -85,6 +108,42 @@
 
     return buildResponse_(existing.row, parsePayloadJson_(existing.row.payload_json), true);
   });
+
+
+  function selectCoreSources_(ctx, payload) {
+    const selected = ['daily_summary', 'control_tower'];
+    const disabled = [];
+    const evaluatedFlags = {
+      PHASE_A_CORE: !!(ctx && ctx.flags && ctx.flags.isOn && ctx.flags.isOn(FLAG.PHASE_A_CORE)),
+      payload_disable_all_cores: !!(payload && payload.disable_all_cores === true),
+    };
+
+    if (payload && payload.disable_all_cores === true) {
+      selected.length = 0;
+      disabled.push('payload.disable_all_cores=true');
+    }
+
+    return {
+      selected_core_keys: selected,
+      disabled_reasons: disabled,
+      evaluated_flags: evaluatedFlags,
+    };
+  }
+
+  function skippedCore_(key, reasons) {
+    return {
+      ok: false,
+      key: key,
+      action: key,
+      status: 503,
+      code: 'SERVICE_UNAVAILABLE',
+      error: 'core disabled by selection',
+      ms: 0,
+      rid: '',
+      attempts: 0,
+      disabled_reasons: reasons || [],
+    };
+  }
 
   function withScriptLock_(lockKey, fn) {
     const lock = LockService.getScriptLock();
@@ -309,6 +368,10 @@
         daily_summary: daily || null,
         control_tower: tower || null,
       },
+      core_results: [toCoreResult_(sourceStatus.daily), toCoreResult_(sourceStatus.tower)],
+      selected_core_keys: sourceStatus.selected_core_keys || ['daily_summary', 'control_tower'],
+      disabled_reasons: sourceStatus.disabled_reasons || [],
+      evaluated_flags: sourceStatus.evaluated_flags || {},
       errors: partialErrors,
     };
   }
@@ -321,6 +384,7 @@
       snapshot_date: asString_(row.snapshot_date),
       replayed: replayed,
       snapshot_id: asString_(row.snapshot_id),
+      details: buildResponseDetails_(snapshotPayload),
       snapshot: snapshotPayload || {
         headline: {
           deficit_total_missing_qty: 0,
@@ -342,8 +406,44 @@
         },
         notes: 'Snapshot payload is unavailable.',
         sections: { daily_summary: null, control_tower: null },
+        core_results: [
+          { key: 'daily_summary', status: 502, code: 'BAD_GATEWAY', error: 'payload unavailable', ms: 0, rid: '' },
+          { key: 'control_tower', status: 502, code: 'BAD_GATEWAY', error: 'payload unavailable', ms: 0, rid: '' },
+        ],
+        selected_core_keys: ['daily_summary', 'control_tower'],
+        disabled_reasons: [],
+        evaluated_flags: {},
         errors: [{ key: 'snapshot', status: 502, code: 'BAD_GATEWAY', error: 'payload unavailable' }],
       },
+    };
+  }
+
+
+  function buildResponseDetails_(snapshotPayload) {
+    const payload = snapshotPayload || {};
+    const cores = Array.isArray(payload.core_results)
+      ? payload.core_results
+      : [
+          toCoreResult_({ key: 'daily_summary', ok: !!(payload.sections && payload.sections.daily_summary), status: payload.sections && payload.sections.daily_summary ? 200 : 502 }),
+          toCoreResult_({ key: 'control_tower', ok: !!(payload.sections && payload.sections.control_tower), status: payload.sections && payload.sections.control_tower ? 200 : 502 }),
+        ];
+
+    return {
+      cores: cores,
+      selected_core_keys: Array.isArray(payload.selected_core_keys) ? payload.selected_core_keys : ['daily_summary', 'control_tower'],
+      disabled_reasons: Array.isArray(payload.disabled_reasons) ? payload.disabled_reasons : [],
+      evaluated_flags: (payload.evaluated_flags && typeof payload.evaluated_flags === 'object') ? payload.evaluated_flags : {},
+    };
+  }
+
+  function toCoreResult_(source) {
+    return {
+      key: asString_(source && source.key),
+      status: num_(source && source.status) || ((source && source.ok) ? 200 : 502),
+      code: asString_(source && source.code) || ((source && source.ok) ? 'OK' : 'BAD_GATEWAY'),
+      error: asString_(source && source.error),
+      ms: num_(source && source.ms),
+      rid: asString_(source && source.rid),
     };
   }
 
