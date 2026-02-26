@@ -6,7 +6,7 @@ import { callGas } from "@/lib/integrations/gasClient";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { requireRole } from "@/lib/server/guards";
 
-type Body = { sku_id?: unknown; location_id?: unknown; qty?: unknown; reason?: unknown; proof_ref?: unknown };
+type Body = { sku_id?: unknown; location_id?: unknown; qty?: unknown; expected_version_id?: unknown; reason?: unknown; proof_ref?: unknown };
 
 type ReserveResp = { reservation_id?: unknown; operation_id?: unknown; reserved_qty?: unknown; available_qty?: unknown; version_id?: unknown; updated_at?: unknown; replayed?: unknown };
 
@@ -20,12 +20,21 @@ function qtyNum(v: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function versionNum(v: unknown): number | null {
+  if (v === undefined || v === null) return null;
+  const parsed = Number.parseInt(String(v), 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function mapError(requestId: string, raw: unknown) {
   const parsed = parseErrorPayload(raw);
   if (parsed.code === "FLAG_DISABLED") return json(requestId, 400, { ok: false, code: "FLAG_DISABLED" });
   if (parsed.code === "LOCK_CONFLICT") return json(requestId, 409, { ok: false, code: "LOCK_CONFLICT" });
   if (parsed.code === "INSUFFICIENT_AVAILABLE") return json(requestId, 409, { ok: false, code: "INSUFFICIENT_AVAILABLE" });
   if (parsed.code === "NOT_FOUND") return json(requestId, 404, { ok: false, code: "SKU_NOT_FOUND" });
+  if (parsed.code === "VERSION_CONFLICT") {
+    return json(requestId, 409, { ok: false, code: "VERSION_CONFLICT", error: parsed.error, ...(parsed.details ? { details: parsed.details } : {}) });
+  }
   if (parsed.code === "BAD_REQUEST") return json(requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: parsed.error });
   return json(requestId, 502, { ok: false, code: parsed.code, error: parsed.error });
 }
@@ -47,12 +56,16 @@ export async function POST(request: Request) {
   const reason = str(body.reason);
   const proofRef = str(body.proof_ref);
   const qty = qtyNum(body.qty);
+  const expectedVersionId = versionNum(body.expected_version_id);
 
-  if (!skuId || !locationId || qty === null || qty <= 0) {
+  if (!skuId || !locationId || qty === null || qty <= 0 || Math.floor(qty) !== qty) {
     return json(auth.requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: "Invalid reserve payload" });
   }
+  if (expectedVersionId === null) {
+    return json(auth.requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: "expected_version_id is required" });
+  }
 
-  const gas = await callGas<ReserveResp>("inventory.reserve", { sku_id: skuId, location_id: locationId, qty, reason, proof_ref: proofRef }, auth.requestId);
+  const gas = await callGas<ReserveResp>("inventory.reserve", { sku_id: skuId, location_id: locationId, qty, expected_version_id: expectedVersionId, reason, proof_ref: proofRef }, auth.requestId);
   if (!gas.ok || !gas.data) return mapError(auth.requestId, (gas as { error?: unknown }).error);
 
   return json(auth.requestId, 200, {

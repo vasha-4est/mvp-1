@@ -157,6 +157,7 @@ function parseErrorFromMessage_(message) {
     FORBIDDEN: true,
     FLAG_DISABLED: true,
     LOCK_CONFLICT: true,
+    VERSION_CONFLICT: true,
     INSUFFICIENT_STOCK: true,
     INSUFFICIENT_AVAILABLE: true,
     INSUFFICIENT_RESERVED: true,

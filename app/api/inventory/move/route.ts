@@ -11,6 +11,7 @@ type Body = {
   from_location_id?: unknown;
   to_location_id?: unknown;
   qty?: unknown;
+  expected_version_id?: unknown;
   reason?: unknown;
   proof_ref?: unknown;
 };
@@ -30,12 +31,21 @@ function qtyNum(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function versionNum(value: unknown): number | null {
+  if (value === undefined || value === null) return null;
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function mapError(requestId: string, raw: unknown) {
   const parsed = parseErrorPayload(raw);
   if (parsed.code === "FLAG_DISABLED") return json(requestId, 503, { ok: false, code: "FLAG_DISABLED" });
   if (parsed.code === "LOCK_CONFLICT") return json(requestId, 409, { ok: false, code: "LOCK_CONFLICT", error: parsed.error });
   if (parsed.code === "INSUFFICIENT_STOCK") return json(requestId, 409, { ok: false, code: "INSUFFICIENT_STOCK" });
   if (parsed.code === "NOT_FOUND") return json(requestId, 404, { ok: false, code: "SKU_NOT_FOUND" });
+  if (parsed.code === "VERSION_CONFLICT") {
+    return json(requestId, 409, { ok: false, code: "VERSION_CONFLICT", error: parsed.error, ...(parsed.details ? { details: parsed.details } : {}) });
+  }
   if (parsed.code === "BAD_REQUEST") return json(requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: parsed.error });
   return json(requestId, 502, { ok: false, code: parsed.code, error: parsed.error });
 }
@@ -62,14 +72,18 @@ export async function POST(request: Request) {
   const reason = str(body.reason);
   const proofRef = str(body.proof_ref);
   const qty = qtyNum(body.qty);
+  const expectedVersionId = versionNum(body.expected_version_id);
 
-  if (!skuId || !fromLocationId || !toLocationId || fromLocationId === toLocationId || qty === null || qty <= 0) {
+  if (!skuId || !fromLocationId || !toLocationId || fromLocationId === toLocationId || qty === null || qty <= 0 || Math.floor(qty) !== qty) {
     return json(auth.requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: "Invalid inventory move payload" });
+  }
+  if (expectedVersionId === null) {
+    return json(auth.requestId, 400, { ok: false, code: "VALIDATION_ERROR", error: "expected_version_id is required" });
   }
 
   const gas = await callGas<MoveResp>(
     "inventory.move.create",
-    { sku_id: skuId, from_location_id: fromLocationId, to_location_id: toLocationId, qty, reason, proof_ref: proofRef },
+    { sku_id: skuId, from_location_id: fromLocationId, to_location_id: toLocationId, qty, expected_version_id: expectedVersionId, reason, proof_ref: proofRef },
     auth.requestId
   );
 

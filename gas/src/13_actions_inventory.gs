@@ -40,12 +40,14 @@
     const reason = str_(payload.reason);
     const proofRef = str_(payload.proof_ref);
     const qty = num_(payload.qty);
+    const expectedVersionId = parseVersionInt_(payload.expected_version_id);
 
     if (!skuId) throw new Error(ERROR.BAD_REQUEST + ': missing sku_id');
     if (!fromLocationId) throw new Error(ERROR.BAD_REQUEST + ': missing from_location_id');
     if (!toLocationId) throw new Error(ERROR.BAD_REQUEST + ': missing to_location_id');
     if (fromLocationId === toLocationId) throw new Error(ERROR.BAD_REQUEST + ': from_location_id must differ from to_location_id');
-    if (!Number.isFinite(qty) || qty <= 0) throw new Error(ERROR.BAD_REQUEST + ': qty must be > 0');
+    if (!Number.isFinite(qty) || qty <= 0 || Math.floor(qty) !== qty) throw new Error(ERROR.BAD_REQUEST + ': qty must be a positive integer');
+    if (expectedVersionId === null) throw new Error(ERROR.BAD_REQUEST + ': expected_version_id is required');
 
     return withInventoryMoveLock_(ctx, skuId, fromLocationId, () => {
       const replayMoveId = replayMoveId_(ctx.requestId);
@@ -64,13 +66,15 @@
       const movedAt = nowIso_();
       const fromRow = readBalanceRow_(skuId, fromLocationId);
       if (!fromRow) throw new Error(ERROR.NOT_FOUND + ': SKU_NOT_FOUND');
+      ensureExpectedVersion_(skuId, fromLocationId, expectedVersionId, fromRow.versionId);
       if (fromRow.onHandQty < qty) throw new Error(ERROR.INSUFFICIENT_STOCK + ': insufficient on_hand_qty');
 
-      updateBalanceRow_(fromRow, fromRow.onHandQty - qty, fromRow.reservedQty, movedAt);
+      const fromVersionNew = updateBalanceRow_(fromRow, fromRow.onHandQty - qty, fromRow.reservedQty, movedAt);
 
       const toRow = readBalanceRow_(skuId, toLocationId);
+      let toVersionNew = '';
       if (toRow) {
-        updateBalanceRow_(toRow, toRow.onHandQty + qty, toRow.reservedQty, movedAt);
+        toVersionNew = updateBalanceRow_(toRow, toRow.onHandQty + qty, toRow.reservedQty, movedAt);
       } else {
         Db_.append_(SHEET.INVENTORY, {
           sku_id: skuId,
@@ -81,6 +85,7 @@
           version_id: '1',
           updated_at: movedAt,
         });
+        toVersionNew = '1';
       }
 
       const moveId = nextMoveId_(movedAt);
@@ -115,6 +120,8 @@
         from_location_id: fromLocationId,
         to_location_id: toLocationId,
         qty,
+        from_version_id_new: fromVersionNew,
+        to_version_id_new: toVersionNew,
       };
     });
   });
@@ -127,10 +134,12 @@
     const reason = str_(payload.reason);
     const proofRef = str_(payload.proof_ref);
     const qty = num_(payload.qty);
+    const expectedVersionId = parseVersionInt_(payload.expected_version_id);
 
     if (!skuId) throw new Error(ERROR.BAD_REQUEST + ': missing sku_id');
     if (!locationId) throw new Error(ERROR.BAD_REQUEST + ': missing location_id');
-    if (!Number.isFinite(qty) || qty <= 0) throw new Error(ERROR.BAD_REQUEST + ': qty must be > 0');
+    if (!Number.isFinite(qty) || qty <= 0 || Math.floor(qty) !== qty) throw new Error(ERROR.BAD_REQUEST + ': qty must be a positive integer');
+    if (expectedVersionId === null) throw new Error(ERROR.BAD_REQUEST + ': expected_version_id is required');
 
     const action = 'inventory.reserve';
     const operationId = operationId_(ctx.requestId, 'RSV');
@@ -143,6 +152,7 @@
       const updatedAt = nowIso_();
       const row = readBalanceRow_(skuId, locationId);
       if (!row) throw new Error(ERROR.NOT_FOUND + ': SKU_NOT_FOUND');
+      ensureExpectedVersion_(skuId, locationId, expectedVersionId, row.versionId);
       if (row.availableQty < qty) throw new Error(ERROR.INSUFFICIENT_AVAILABLE + ': insufficient available_qty');
 
       const nextReservedQty = row.reservedQty + qty;
@@ -186,10 +196,12 @@
     const reason = str_(payload.reason);
     const proofRef = str_(payload.proof_ref);
     const qty = num_(payload.qty);
+    const expectedVersionId = parseVersionInt_(payload.expected_version_id);
 
     if (!skuId) throw new Error(ERROR.BAD_REQUEST + ': missing sku_id');
     if (!locationId) throw new Error(ERROR.BAD_REQUEST + ': missing location_id');
-    if (!Number.isFinite(qty) || qty <= 0) throw new Error(ERROR.BAD_REQUEST + ': qty must be > 0');
+    if (!Number.isFinite(qty) || qty <= 0 || Math.floor(qty) !== qty) throw new Error(ERROR.BAD_REQUEST + ': qty must be a positive integer');
+    if (expectedVersionId === null) throw new Error(ERROR.BAD_REQUEST + ': expected_version_id is required');
 
     const action = 'inventory.release';
     const operationId = operationId_(ctx.requestId, 'REL');
@@ -202,6 +214,7 @@
       const updatedAt = nowIso_();
       const row = readBalanceRow_(skuId, locationId);
       if (!row) throw new Error(ERROR.NOT_FOUND + ': SKU_NOT_FOUND');
+      ensureExpectedVersion_(skuId, locationId, expectedVersionId, row.versionId);
       if (row.reservedQty < qty) throw new Error(ERROR.INSUFFICIENT_RESERVED + ': insufficient reserved_qty');
 
       const nextReservedQty = row.reservedQty - qty;
@@ -447,7 +460,7 @@
       qty,
       reserved_qty: row ? row.reservedQty : null,
       available_qty: row ? row.availableQty : null,
-      version_id: row ? row.versionId : '',
+      version_id: row ? String(row.versionId) : '',
       updated_at: row ? row.updatedAt : nowIso_(),
     };
   }
@@ -481,7 +494,7 @@
       qty,
       reserved_qty: row ? row.reservedQty : null,
       available_qty: row ? row.availableQty : null,
-      version_id: row ? row.versionId : '',
+      version_id: row ? String(row.versionId) : '',
       updated_at: row ? row.updatedAt : nowIso_(),
     };
   }
@@ -511,6 +524,28 @@
     }
   }
 
+
+  function parseVersionInt_(value) {
+    if (value === undefined || value === null || String(value).trim() === '') return null;
+    const parsed = parseInt(String(value), 10);
+    if (!Number.isFinite(parsed)) return null;
+    return parsed;
+  }
+
+  function ensureExpectedVersion_(skuId, locationId, expectedVersionId, currentVersionId) {
+    const currentVersion = parseVersionInt_(currentVersionId);
+    if (currentVersion === null || currentVersion !== expectedVersionId) {
+      throw new Error(
+        ERROR.VERSION_CONFLICT + ': stale version | ' + JSON.stringify({
+          sku_id: skuId,
+          location_id: locationId,
+          expected_version_id: expectedVersionId,
+          current_version_id: currentVersion,
+        })
+      );
+    }
+  }
+
   function readBalanceRow_(skuId, locationId) {
     const sheet = Sys_.sheet_(SHEET.INVENTORY);
     const lastRow = sheet.getLastRow();
@@ -530,7 +565,7 @@
           onHandQty: num_(values[i][idx.on_hand_qty]),
           reservedQty: num_(values[i][idx.reserved_qty]),
           availableQty: num_(values[i][idx.available_qty]),
-          versionId: str_(values[i][idx.version_id] || '0'),
+          versionId: parseVersionInt_(values[i][idx.version_id]) || 0,
           updatedAt: str_(values[i][idx.updated_at]),
         };
       }
@@ -541,15 +576,20 @@
 
   function updateBalanceRow_(row, nextOnHandQty, nextReservedQty, updatedAt) {
     const sheet = Sys_.sheet_(SHEET.INVENTORY);
-    const currentVersion = str_(sheet.getRange(row.rowNumber, row.idx.version_id + 1).getValue() || '0');
-    if (currentVersion !== row.versionId) {
-      throw new Error(ERROR.LOCK_CONFLICT + ': version mismatch');
+    const currentVersion = parseVersionInt_(sheet.getRange(row.rowNumber, row.idx.version_id + 1).getValue());
+    if (currentVersion === null || currentVersion !== row.versionId) {
+      throw new Error(ERROR.VERSION_CONFLICT + ': stale version | ' + JSON.stringify({
+        sku_id: str_(row.rowValues[row.idx.sku_id]),
+        location_id: str_(row.rowValues[row.idx.location_id]),
+        expected_version_id: row.versionId,
+        current_version_id: currentVersion,
+      }));
     }
 
     const onHandQty = num_(nextOnHandQty);
     const reservedQty = num_(nextReservedQty);
     const availableQty = onHandQty - reservedQty;
-    const nextVersion = String(num_(currentVersion) + 1);
+    const nextVersion = String(currentVersion + 1);
 
     const out = row.rowValues.slice();
     out[row.idx.on_hand_qty] = String(onHandQty);
