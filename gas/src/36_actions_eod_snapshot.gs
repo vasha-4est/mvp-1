@@ -17,6 +17,7 @@
     const snapshotDate = normalizeSnapshotDate_(payload.date, tz);
     const lockKey = 'eod:snapshot:' + snapshotDate + ':' + tz;
     const coreSelection = selectCoreSources_(ctx, payload);
+    const coresOverride = normalizeCoresOverride_(payload.cores_override);
 
     withScriptLock_(lockKey, function () {
       const sh = resolveTargetSheet_();
@@ -26,7 +27,7 @@
         return buildResponse_(existing.row, existingPayload, true);
       }
 
-      if (coreSelection.selected_core_keys.length === 0) {
+      if (coreSelection.selected_core_keys.length === 0 && !coresOverride.valid) {
         throw new Error(
           'EOD_NO_CORE_SOURCES: no core sources selected | ' + JSON.stringify({
             date: snapshotDate,
@@ -38,15 +39,19 @@
         );
       }
 
-      const daily = coreSelection.selected_core_keys.indexOf('daily_summary') >= 0
-        ? executeSource_(ctx, 'daily_summary', 'daily.summary.get', {
-            days: Math.max(1, daysWindow),
-            tz: tz,
-          }, true)
-        : skippedCore_('daily_summary', coreSelection.disabled_reasons);
-      const tower = coreSelection.selected_core_keys.indexOf('control_tower') >= 0
-        ? executeSource_(ctx, 'control_tower', 'control_tower.read', {}, true)
-        : skippedCore_('control_tower', coreSelection.disabled_reasons);
+      const daily = coresOverride.valid
+        ? overriddenCore_('daily_summary', 'daily.summary.get', coresOverride.daily_summary)
+        : (coreSelection.selected_core_keys.indexOf('daily_summary') >= 0
+          ? executeSource_(ctx, 'daily_summary', 'daily.summary.get', {
+              days: Math.max(1, daysWindow),
+              tz: tz,
+            }, true)
+          : skippedCore_('daily_summary', coreSelection.disabled_reasons));
+      const tower = coresOverride.valid
+        ? overriddenCore_('control_tower', 'control_tower.read', coresOverride.control_tower)
+        : (coreSelection.selected_core_keys.indexOf('control_tower') >= 0
+          ? executeSource_(ctx, 'control_tower', 'control_tower.read', {}, true)
+          : skippedCore_('control_tower', coreSelection.disabled_reasons));
       const throughput = executeSource_(ctx, 'throughput', 'kpi.throughput.get', { days: 1 }, false);
       const throughputShifts = executeSource_(ctx, 'throughput_shifts', 'kpi.throughput.shifts.get', { days: 1, tz: tz }, false);
       const shipmentSla = executeSource_(ctx, 'shipment_sla', 'kpi.shipment.sla.get', { days: 1, tz: tz, sla_hours: 24 }, false);
@@ -60,6 +65,7 @@
             selected_core_keys: coreSelection.selected_core_keys,
             disabled_reasons: coreSelection.disabled_reasons,
             evaluated_flags: coreSelection.evaluated_flags,
+            used_override: coresOverride.valid,
             cores: [toErrorCore_(daily), toErrorCore_(tower)],
           })
         );
@@ -72,6 +78,7 @@
         selected_core_keys: coreSelection.selected_core_keys,
         disabled_reasons: coreSelection.disabled_reasons,
         evaluated_flags: coreSelection.evaluated_flags,
+        used_override: coresOverride.valid,
       });
 
       const generatedAt = nowIso_();
@@ -142,6 +149,43 @@
       rid: '',
       attempts: 0,
       disabled_reasons: reasons || [],
+    };
+  }
+
+
+  function normalizeCoresOverride_(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return { valid: false, daily_summary: null, control_tower: null };
+    }
+
+    const daily = raw.daily_summary;
+    const tower = raw.control_tower;
+    const dailyOk = daily && typeof daily === 'object' && !Array.isArray(daily);
+    const towerOk = tower && typeof tower === 'object' && !Array.isArray(tower);
+    if (!dailyOk || !towerOk) {
+      return { valid: false, daily_summary: null, control_tower: null };
+    }
+
+    return {
+      valid: true,
+      daily_summary: daily,
+      control_tower: tower,
+    };
+  }
+
+  function overriddenCore_(key, action, data) {
+    return {
+      ok: true,
+      key: key,
+      action: action,
+      status: 200,
+      code: 'OK',
+      error: '',
+      ms: 0,
+      rid: 'override',
+      data: data,
+      attempts: 1,
+      isCore: true,
     };
   }
 
@@ -390,6 +434,7 @@
       selected_core_keys: sourceStatus.selected_core_keys || ['daily_summary', 'control_tower'],
       disabled_reasons: sourceStatus.disabled_reasons || [],
       evaluated_flags: sourceStatus.evaluated_flags || {},
+      used_override: !!sourceStatus.used_override,
       errors: partialErrors,
     };
   }
@@ -402,6 +447,7 @@
       snapshot_date: asString_(row.snapshot_date),
       replayed: replayed,
       snapshot_id: asString_(row.snapshot_id),
+      meta: { used_override: !!(snapshotPayload && snapshotPayload.used_override) },
       details: buildResponseDetails_(snapshotPayload),
       snapshot: snapshotPayload || {
         date: asString_(row.snapshot_date),
@@ -433,6 +479,7 @@
         selected_core_keys: ['daily_summary', 'control_tower'],
         disabled_reasons: [],
         evaluated_flags: {},
+        used_override: false,
         errors: [{ key: 'snapshot', status: 502, code: 'BAD_GATEWAY', error: 'payload unavailable' }],
       },
     };

@@ -1,4 +1,6 @@
 import { parseErrorPayload, type ParsedGasError } from "@/lib/api/gasError";
+import { getControlTowerSnapshot } from "@/lib/control-tower/snapshot";
+import { getDailySummary } from "@/lib/daily/readDailySummary";
 import { callGas } from "@/lib/integrations/gasClient";
 
 export type EodSnapshotPayload = {
@@ -14,6 +16,9 @@ export type EodSnapshotPayload = {
     selected_core_keys?: string[];
     disabled_reasons?: string[];
     evaluated_flags?: Record<string, unknown>;
+  };
+  meta?: {
+    used_override?: boolean;
   };
   snapshot: {
     headline: {
@@ -60,24 +65,81 @@ function normalizeError(error: unknown, fallback: string): ParsedGasError {
   };
 }
 
+function isCoreUnavailableError(result: { code: string; error: string }): boolean {
+  return result.code === "BAD_GATEWAY" && result.error.toLowerCase().includes("core eod sources unavailable");
+}
+
 export async function upsertEodSnapshot(
   requestId: string,
   payload: { date?: string | null; tz: string; days_window?: number }
 ): Promise<EodResult> {
-  const response = await callGas<EodSnapshotPayload>("eod.snapshot.upsert", payload, requestId, {
+  const firstResponse = await callGas<EodSnapshotPayload>("eod.snapshot.upsert", payload, requestId, {
     timeoutMs: 25_000,
     retries: 1,
     retryBackoffMs: 500,
   });
 
-  if (!response.ok || !response.data) {
+  if (firstResponse.ok && firstResponse.data) {
+    return { ok: true, data: firstResponse.data };
+  }
+
+  const firstError = normalizeError(firstResponse.error, "Failed to generate EOD snapshot");
+  if (!isCoreUnavailableError(firstError)) {
+    return { ok: false, ...firstError };
+  }
+
+  const dailySummary = await getDailySummary(requestId, {
+    days: Math.max(1, payload.days_window ?? 1),
+    tz: payload.tz,
+  });
+  const controlTower = await getControlTowerSnapshot(requestId);
+
+  if (dailySummary.ok === false || controlTower.ok === false) {
     return {
       ok: false,
-      ...normalizeError(response.error, "Failed to generate EOD snapshot"),
+      code: "BAD_GATEWAY",
+      error: "core EOD sources unavailable",
+      details: {
+        phase: "override_fetch",
+        daily_summary: dailySummary.ok === false ? { code: dailySummary.code, error: dailySummary.error } : { ok: true },
+        control_tower: controlTower.ok === false ? { code: controlTower.code, error: controlTower.error } : { ok: true },
+      },
     };
   }
 
-  return { ok: true, data: response.data };
+  const secondResponse = await callGas<EodSnapshotPayload>(
+    "eod.snapshot.upsert",
+    {
+      ...payload,
+      cores_override: {
+        daily_summary: dailySummary.data,
+        control_tower: controlTower.data,
+      },
+    },
+    requestId,
+    {
+      timeoutMs: 25_000,
+      retries: 0,
+    }
+  );
+
+  if (!secondResponse.ok || !secondResponse.data) {
+    return {
+      ok: false,
+      ...normalizeError(secondResponse.error, "Failed to generate EOD snapshot using override"),
+    };
+  }
+
+  return {
+    ok: true,
+    data: {
+      ...secondResponse.data,
+      meta: {
+        ...(secondResponse.data.meta ?? {}),
+        used_override: true,
+      },
+    },
+  };
 }
 
 export async function getEodSnapshot(requestId: string, payload: { date: string; tz: string }): Promise<EodResult> {
