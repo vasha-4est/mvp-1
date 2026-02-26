@@ -19,6 +19,7 @@ const LINKS = [
   { href: "/drying", label: "Drying" },
   { href: "/packaging", label: "Packaging" },
   { href: "/control-tower", label: "Control Tower" },
+  { href: "/live-floor", label: "Live Floor" },
   { href: "/kpi/deficit", label: "Deficit KPI" },
   { href: "/kpi/throughput", label: "Throughput KPI" },
   { href: "/shipments/readiness", label: "Shipments" },
