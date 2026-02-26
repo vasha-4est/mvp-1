@@ -160,6 +160,7 @@ function parseErrorFromMessage_(message) {
     INSUFFICIENT_AVAILABLE: true,
     INSUFFICIENT_RESERVED: true,
     BAD_REQUEST: true,
+    VALIDATION_ERROR: true,
     CONTROL_MODEL_SHEET_INVALID: true,
     INVALID_PRODUCTS_SKU_SCHEMA: true,
     INTERNAL_ERROR: true,
