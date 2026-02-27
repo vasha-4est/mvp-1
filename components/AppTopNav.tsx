@@ -26,6 +26,7 @@ const LINKS = [
   { href: "/kpi/throughput-shifts", label: "Throughput Shifts KPI" },
   { href: "/kpi/shipment-sla", label: "KPI Shipment SLA" },
   { href: "/shipments/readiness", label: "Shipments" },
+  { href: "/shipments/plan-import", label: "Shipment Plan Import" },
   { href: "/daily/summary", label: "Daily Summary" },
 ] as const;
 
