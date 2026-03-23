@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mvp-1.local/context/reference/event_schema.target.json",
+  "title": "MVP-1 Target Canonical Event Schema",
+  "description": "Schema aligned to the MVP-1 specification and target unified event model. Use this as the migration target, not as a statement of current runtime reality.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "event_type",
+    "entity_type",
+    "entity_id",
+    "severity",
+    "payload_json",
+    "created_at",
+    "created_by_employee_id"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "shift_planned",
+        "shift_started",
+        "shift_break_started",
+        "shift_break_ended",
+        "shift_ended",
+        "shift_no_show",
+        "floor_status_updated",
+        "lock_acquired",
+        "lock_released",
+        "lock_expired",
+        "task_timeout_triggered",
+        "task_grace_extended",
+        "task_escalated",
+        "task_returned_to_pool",
+        "batch_created",
+        "batch_started",
+        "batch_finished",
+        "batch_moved",
+        "batch_defect_recorded",
+        "materials_consumed",
+        "packaging_started",
+        "packaging_finished",
+        "labeling_finished",
+        "inventory_received",
+        "inventory_moved",
+        "inventory_reserved",
+        "inventory_reserve_released",
+        "picking_list_created",
+        "picking_list_imported",
+        "picking_list_status_changed",
+        "picking_focus_set",
+        "picking_scan_captured",
+        "picking_confirmed",
+        "picking_line_completed",
+        "picking_warehouse_closed",
+        "picking_list_closed",
+        "shipment_marked",
+        "incident_reported",
+        "manual_entry_used",
+        "daily_summary_generated",
+        "tomorrow_plan_generated",
+        "tomorrow_plan_overridden",
+        "payroll_calculated",
+        "payroll_line_created",
+        "payroll_adjusted_manual_exception",
+        "marketplace_penalty_added",
+        "kpi_calculated",
+        "kpi_threshold_exceeded",
+        "sla_risk_detected",
+        "bottleneck_detected",
+        "wip_limit_reached",
+        "recommendation_generated",
+        "STOP",
+        "DECISION",
+        "SOP_CHANGE",
+        "system_error",
+        "system_warning",
+        "manual_refresh_triggered",
+        "unauthorized_access_attempt",
+        "user_logged_in",
+        "user_logged_out",
+        "user_login_failed",
+        "login_failed_multiple",
+        "user_created",
+        "user_role_changed",
+        "password_reset",
+        "user_blocked",
+        "user_unblocked",
+        "impersonation_started",
+        "impersonation_ended"
+      ]
+    },
+    "entity_type": {
+      "type": "string",
+      "enum": [
+        "shift",
+        "employee",
+        "lock",
+        "work_item",
+        "batch",
+        "inventory",
+        "picking_list",
+        "picking_line",
+        "shipment",
+        "incident",
+        "payroll_period",
+        "payroll_line",
+        "kpi",
+        "stop",
+        "decision",
+        "sop_change",
+        "user",
+        "session",
+        "impersonation_session",
+        "system"
+      ]
+    },
+    "entity_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "info",
+        "important",
+        "critical"
+      ]
+    },
+    "payload_json": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "created_by_employee_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "webapp",
+        "bot",
+        "system",
+        "api",
+        "admin"
+      ]
+    },
+    "client_ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "version": {
+      "type": "string"
+    }
+  }
+}
