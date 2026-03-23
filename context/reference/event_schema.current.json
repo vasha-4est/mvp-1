@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mvp-1.local/context/reference/event_schema.current.json",
+  "title": "MVP-1 Current Runtime Event Schemas",
+  "description": "Schema matching the current repository runtime reality, including legacy events_log rows, PR-103 audit-style events_log rows, and append-only batch_events rows.",
+  "oneOf": [
+    {
+      "title": "events_log legacy row via gas/src/07_events.gs",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "server_ts",
+        "request_id",
+        "event_key",
+        "zone_id",
+        "object_type",
+        "payload_json",
+        "actor_employee_id",
+        "actor_role"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "server_ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "zone_id": {
+          "type": "string"
+        },
+        "object_type": {
+          "type": "string"
+        },
+        "payload_json": {
+          "type": "string"
+        },
+        "actor_employee_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actor_role": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    {
+      "title": "events_log audit/PR-103 row via gas/src/22_audit.gs and gas/src/34_actions_events.gs",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "event_type",
+        "entity_type",
+        "entity_id",
+        "created_at",
+        "actor_user_id",
+        "actor_role_id",
+        "source",
+        "request_id",
+        "payload_json"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "pattern": "^EV-\\d{6}-\\d{3,}$|^[A-Za-z0-9._:-]+$"
+        },
+        "event_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entity_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entity_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "actor_user_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actor_role_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "required_proof": {
+          "type": "string"
+        },
+        "proof_ref": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "webapp",
+            "system"
+          ]
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload_json": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "batch_events append-only row via gas/src/07_events.gs and gas/src/21_batch_events_repo.gs",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "at",
+        "batch_code",
+        "batch_id",
+        "type",
+        "actor",
+        "request_id",
+        "details_json"
+      ],
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "batch_code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "batch_id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actor": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "details_json": {
+          "type": "string"
+        }
+      }
+    }
+  ]
+}
