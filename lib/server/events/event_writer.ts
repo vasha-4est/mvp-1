@@ -1,5 +1,5 @@
 // event_writer.ts
-// Canonical writer for events (target schema)
+// Minimal production-ready event writer (GAS integration)
 
 import { normalizeEvent } from "./event_adapter";
 
@@ -18,13 +18,13 @@ interface TargetEvent {
   request_id?: string;
 }
 
-// In-memory idempotency cache (replace with DB later)
+// In-memory idempotency cache (MVP only)
 const idempotencyCache = new Set<string>();
 
-export function createEvent(rawEvent: AnyObject): TargetEvent {
+export async function createEvent(rawEvent: AnyObject): Promise<TargetEvent> {
   const event = normalizeEvent(rawEvent);
 
-  // Idempotency check
+  // Idempotency (basic)
   if (event.request_id && idempotencyCache.has(event.request_id)) {
     return event;
   }
@@ -33,11 +33,9 @@ export function createEvent(rawEvent: AnyObject): TargetEvent {
     idempotencyCache.add(event.request_id);
   }
 
-  // Validation (basic)
   validateEvent(event);
 
-  // Write (stub — replace with GAS/API integration)
-  logEvent(event);
+  await sendToGAS(event);
 
   return event;
 }
@@ -49,7 +47,26 @@ function validateEvent(event: TargetEvent) {
   if (!event.created_at) throw new Error("created_at is required");
 }
 
-function logEvent(event: TargetEvent) {
-  // Replace with real persistence layer
-  console.log("[EVENT]", JSON.stringify(event, null, 2));
+async function sendToGAS(event: TargetEvent) {
+  const url = process.env.GAS_WEBAPP_URL;
+
+  if (!url) {
+    throw new Error("GAS_WEBAPP_URL is not set");
+  }
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      action: "event.write",
+      payload: event,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`GAS write failed: ${res.status} ${text}`);
+  }
 }
