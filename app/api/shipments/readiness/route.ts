@@ -39,7 +39,8 @@ export async function GET(request: Request) {
 
   return json(auth.requestId, 200, {
     ok: true,
-    generated_at: new Date().toISOString(),
+    generated_at: result.generated_at,
+    import_batch_id: result.import_batch_id,
     shipments: result.shipments,
   });
 }
