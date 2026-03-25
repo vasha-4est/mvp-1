@@ -1,28 +1,31 @@
 import { parseErrorPayload, type ParsedGasError } from "@/lib/api/gasError";
-import { callGas } from "@/lib/integrations/gasClient";
-import { getShipmentWithLines, listShipments } from "@/lib/shipments/readShipments";
+import { getInventoryBalances } from "@/lib/inventory/getInventoryBalances";
+import { readLatestStagedShipmentPlanBatch } from "@/lib/shipmentPlan/readLatestStagedBatch";
 
 export type ShipmentReadinessItem = {
   shipment_id: string;
-  status: "READY" | "PARTIAL" | "BLOCKED";
+  status: "not_ready" | "partial_ready" | "ready";
+  planned_date: string | null;
+  deadline_at: string | null;
+  destination: string | null;
+  progress: number;
   readiness_percent: number;
+  eta_at: string | null;
+  sla_risk: boolean;
+  sla_risk_reason: "eta_after_deadline" | "near_deadline_partial_ready" | "deadline_passed_not_ready" | null;
+  risk_level: "normal" | "warning";
+  risk_reason: string | null;
+  required_qty: number;
+  available_qty: number;
+  missing_qty: number;
   total_planned_qty: number;
   total_ready_qty: number;
   total_missing_qty: number;
 };
 
 type ShipmentReadinessResult =
-  | { ok: true; shipments: ShipmentReadinessItem[] }
+  | { ok: true; generated_at: string; import_batch_id: string | null; shipments: ShipmentReadinessItem[] }
   | ({ ok: false } & ParsedGasError);
-
-type InventoryBalanceRow = {
-  sku_id?: unknown;
-  reserved_qty?: unknown;
-};
-
-type InventoryBalanceResponse = {
-  balances?: unknown;
-};
 
 function normalizeNumber(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -37,10 +40,6 @@ function normalizeNumber(value: unknown): number {
   return 0;
 }
 
-function normalizeString(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
 function normalizeError(error: unknown, fallback: string): ParsedGasError {
   const parsed = parseErrorPayload(error);
   return {
@@ -49,103 +48,182 @@ function normalizeError(error: unknown, fallback: string): ParsedGasError {
   };
 }
 
-function calculateStatus(totalReadyQty: number, totalMissingQty: number): "READY" | "PARTIAL" | "BLOCKED" {
-  if (totalReadyQty === 0) {
-    return "BLOCKED";
+function clampProgress(requiredQty: number, availableQty: number): number {
+  if (requiredQty <= 0) {
+    return 0;
   }
 
-  if (totalMissingQty === 0) {
-    return "READY";
-  }
-
-  return "PARTIAL";
+  return Math.min(1, Math.max(0, availableQty / requiredQty));
 }
 
-async function getReservedQtyBySku(requestId: string): Promise<{ ok: true; bySku: Map<string, number> } | ({ ok: false } & ParsedGasError)> {
-  const response = await callGas<InventoryBalanceResponse>("inventory.balance.get", { sku_id: "", location_id: "" }, requestId, {
-    timeoutMs: 25_000,
-    retries: 2,
-    retryBackoffMs: 500,
-  });
-
-  if (!response.ok || !response.data) {
-    return { ok: false, ...normalizeError(response.error, "Failed to read inventory balances") };
+function calculateStatus(progress: number): ShipmentReadinessItem["status"] {
+  if (progress <= 0) {
+    return "not_ready";
   }
 
-  const balances = Array.isArray(response.data.balances) ? (response.data.balances as InventoryBalanceRow[]) : [];
-  const bySku = new Map<string, number>();
-
-  for (const balance of balances) {
-    const skuId = normalizeString(balance.sku_id);
-    if (!skuId) {
-      continue;
-    }
-
-    const reservedQty = normalizeNumber(balance.reserved_qty);
-    bySku.set(skuId, (bySku.get(skuId) ?? 0) + reservedQty);
+  if (progress >= 1) {
+    return "ready";
   }
 
-  return { ok: true, bySku };
+  return "partial_ready";
+}
+
+function toIsoOrNull(date: Date): string | null {
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function parseDateOrNull(value: string | null): Date | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function determineEta(status: ShipmentReadinessItem["status"], generatedAt: Date): string | null {
+  if (status === "ready") {
+    return generatedAt.toISOString();
+  }
+
+  if (status === "partial_ready") {
+    return new Date(generatedAt.getTime() + 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  return null;
+}
+
+function determineRiskReason(params: {
+  status: ShipmentReadinessItem["status"];
+  deadlineAt: string | null;
+  etaAt: string | null;
+  generatedAt: Date;
+}): ShipmentReadinessItem["sla_risk_reason"] {
+  const deadline = parseDateOrNull(params.deadlineAt);
+  if (!deadline) {
+    return null;
+  }
+
+  if (params.generatedAt.getTime() > deadline.getTime() && params.status !== "ready") {
+    return "deadline_passed_not_ready";
+  }
+
+  const eta = parseDateOrNull(params.etaAt);
+  if (eta && eta.getTime() > deadline.getTime()) {
+    return "eta_after_deadline";
+  }
+
+  if (params.status === "partial_ready" && deadline.getTime() - params.generatedAt.getTime() < 24 * 60 * 60 * 1000) {
+    return "near_deadline_partial_ready";
+  }
+
+  return null;
 }
 
 export async function getShipmentsReadiness(requestId: string): Promise<ShipmentReadinessResult> {
-  const shipmentsResponse = await listShipments(requestId, 10_000);
-  if (shipmentsResponse.ok === false) {
-    return shipmentsResponse;
+  const generatedAt = new Date();
+  const planResponse = await readLatestStagedShipmentPlanBatch(requestId);
+  if (planResponse.ok === false) {
+    return planResponse;
   }
 
-  const reservedQtyResponse = await getReservedQtyBySku(requestId);
-  if (reservedQtyResponse.ok === false) {
-    return reservedQtyResponse;
+  if (planResponse.rows.length === 0) {
+    return {
+      ok: true,
+      generated_at: generatedAt.toISOString(),
+      import_batch_id: null,
+      shipments: [],
+    };
   }
 
-  const openShipments = shipmentsResponse.data.filter((item) => item.status?.toLowerCase() !== "closed");
+  const balancesResponse = await getInventoryBalances(requestId);
+  if (balancesResponse.ok === false) {
+    return { ok: false, ...normalizeError(balancesResponse.error, "Failed to read inventory balances") };
+  }
 
-  const shipments = await Promise.all(
-    openShipments.map(async (shipment) => {
-      const detailsResponse = await getShipmentWithLines(requestId, shipment.shipment_id);
-      if (detailsResponse.ok === false) {
-        return { ok: false as const, error: detailsResponse };
-      }
+  const availableBySku = new Map<string, number>();
+  for (const balance of balancesResponse.items) {
+    if (!balance.sku_id) continue;
+    availableBySku.set(balance.sku_id, (availableBySku.get(balance.sku_id) ?? 0) + normalizeNumber(balance.available_qty));
+  }
 
-      let totalPlannedQty = 0;
-      let totalReadyQty = 0;
+  const grouped = new Map<
+    string,
+    {
+      shipment_id: string;
+      planned_date: string | null;
+      deadline_at: string | null;
+      destination: string | null;
+      required_qty: number;
+      available_qty: number;
+    }
+  >();
 
-      for (const line of detailsResponse.data.lines) {
-        const plannedQty = Math.max(0, normalizeNumber(line.planned_qty));
-        const reservedQty = reservedQtyResponse.bySku.get(line.sku_id) ?? 0;
-        const readyQty = Math.min(reservedQty, plannedQty);
+  for (const row of planResponse.rows) {
+    const current = grouped.get(row.shipment_id) ?? {
+      shipment_id: row.shipment_id,
+      planned_date: row.planned_date,
+      deadline_at: row.deadline_at,
+      destination: row.destination,
+      required_qty: 0,
+      available_qty: 0,
+    };
 
-        totalPlannedQty += plannedQty;
-        totalReadyQty += readyQty;
-      }
+    const requiredQty = Math.max(0, normalizeNumber(row.planned_qty));
+    const lineAvailableQty = Math.min(availableBySku.get(row.products_sku) ?? 0, requiredQty);
 
-      const totalMissingQty = Math.max(0, totalPlannedQty - totalReadyQty);
-      const readinessPercent =
-        totalPlannedQty === 0 ? 0 : Math.floor((Math.max(0, totalReadyQty) / totalPlannedQty) * 100);
+    current.planned_date = current.planned_date ?? row.planned_date;
+    current.deadline_at = current.deadline_at ?? row.deadline_at;
+    current.destination = current.destination ?? row.destination;
+    current.required_qty += requiredQty;
+    current.available_qty += lineAvailableQty;
+
+    grouped.set(row.shipment_id, current);
+  }
+
+  const shipments = Array.from(grouped.values())
+    .sort((left, right) => left.shipment_id.localeCompare(right.shipment_id))
+    .map((shipment) => {
+      const availableQty = Math.max(0, shipment.available_qty);
+      const requiredQty = Math.max(0, shipment.required_qty);
+      const missingQty = Math.max(0, requiredQty - availableQty);
+      const progress = clampProgress(requiredQty, availableQty);
+      const status = calculateStatus(progress);
+      const etaAt = determineEta(status, generatedAt);
+      const riskReason = determineRiskReason({
+        status,
+        deadlineAt: shipment.deadline_at,
+        etaAt,
+        generatedAt,
+      });
+      const riskLevel: ShipmentReadinessItem["risk_level"] = riskReason ? "warning" : "normal";
 
       return {
-        ok: true as const,
-        item: {
-          shipment_id: shipment.shipment_id,
-          status: calculateStatus(totalReadyQty, totalMissingQty),
-          readiness_percent: readinessPercent,
-          total_planned_qty: totalPlannedQty,
-          total_ready_qty: totalReadyQty,
-          total_missing_qty: totalMissingQty,
-        },
+        shipment_id: shipment.shipment_id,
+        status,
+        planned_date: shipment.planned_date,
+        deadline_at: shipment.deadline_at,
+        destination: shipment.destination,
+        progress,
+        readiness_percent: Math.round(progress * 100),
+        eta_at: etaAt,
+        sla_risk: riskReason !== null,
+        sla_risk_reason: riskReason,
+        risk_level: riskLevel,
+        risk_reason: riskReason,
+        required_qty: requiredQty,
+        available_qty: availableQty,
+        missing_qty: missingQty,
+        total_planned_qty: requiredQty,
+        total_ready_qty: availableQty,
+        total_missing_qty: missingQty,
       };
-    })
-  );
-
-  for (const shipment of shipments) {
-    if (shipment.ok === false) {
-      return shipment.error;
-    }
-  }
+    });
 
   return {
     ok: true,
-    shipments: shipments.map((item) => item.item),
+    generated_at: toIsoOrNull(generatedAt) ?? new Date().toISOString(),
+    import_batch_id: planResponse.import_batch_id,
+    shipments,
   };
 }

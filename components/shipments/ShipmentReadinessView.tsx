@@ -6,10 +6,19 @@ type ShipmentReadinessRow = {
   shipment_id?: unknown;
   status?: unknown;
   planned_date?: unknown;
+  deadline_at?: unknown;
+  progress?: unknown;
   readiness_pct?: unknown;
   readiness_percent?: unknown;
+  required_qty?: unknown;
+  available_qty?: unknown;
+  missing_qty?: unknown;
   missing_items_count?: unknown;
+  total_planned_qty?: unknown;
+  total_ready_qty?: unknown;
   total_missing_qty?: unknown;
+  eta_at?: unknown;
+  sla_risk?: unknown;
   risk_level?: unknown;
   risk_reason?: unknown;
 };
@@ -17,6 +26,7 @@ type ShipmentReadinessRow = {
 type ShipmentReadinessPayload = {
   ok?: boolean;
   generated_at?: unknown;
+  import_batch_id?: unknown;
   shipments?: unknown;
 };
 
@@ -53,6 +63,19 @@ function formatDateTime(value: unknown): string {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(parsed);
+}
+
+function formatPercent(value: unknown, fallback: unknown): string {
+  const direct = typeof value === "number" ? value : typeof fallback === "number" ? fallback : null;
+  if (direct === null || !Number.isFinite(direct)) {
+    return "—";
+  }
+
+  return direct <= 1 ? `${Math.round(direct * 100)}%` : `${Math.round(direct)}%`;
+}
+
+function formatBoolean(value: unknown): string {
+  return value === true ? "true" : value === false ? "false" : "—";
 }
 
 function asRows(data: ShipmentReadinessPayload | null): ShipmentReadinessRow[] {
@@ -117,6 +140,7 @@ export default function ShipmentReadinessView() {
       </div>
 
       <p style={{ margin: 0, color: "#6b7280" }}>Last updated: {formatDateTime(data?.generated_at)}</p>
+      <p style={{ margin: 0, color: "#6b7280" }}>Import batch: {asString(data?.import_batch_id)}</p>
 
       {state.status === "loading" ? <p style={{ margin: 0, color: "#6b7280" }}>Loading…</p> : null}
 
@@ -138,9 +162,13 @@ export default function ShipmentReadinessView() {
                     <th align="left" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>shipment_id</th>
                     <th align="left" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>status</th>
                     <th align="left" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>planned_date</th>
-                    <th align="right" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>readiness_pct</th>
-                    <th align="right" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>missing_items_count</th>
-                    <th align="left" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>risk_level</th>
+                    <th align="left" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>deadline_at</th>
+                    <th align="right" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>progress</th>
+                    <th align="right" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>required_qty</th>
+                    <th align="right" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>available_qty</th>
+                    <th align="right" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>missing_qty</th>
+                    <th align="left" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>eta_at</th>
+                    <th align="left" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>sla_risk</th>
                     <th align="left" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>risk_reason</th>
                   </tr>
                 </thead>
@@ -150,9 +178,13 @@ export default function ShipmentReadinessView() {
                       <td style={{ padding: "8px 0" }}>{asString(item.shipment_id)}</td>
                       <td style={{ padding: "8px 0" }}>{asString(item.status)}</td>
                       <td style={{ padding: "8px 0" }}>{asString(item.planned_date)}</td>
-                      <td align="right" style={{ padding: "8px 0" }}>{asString(item.readiness_pct ?? item.readiness_percent)}</td>
-                      <td align="right" style={{ padding: "8px 0" }}>{asString(item.missing_items_count ?? item.total_missing_qty)}</td>
-                      <td style={{ padding: "8px 0" }}>{asString(item.risk_level)}</td>
+                      <td style={{ padding: "8px 0" }}>{formatDateTime(item.deadline_at)}</td>
+                      <td align="right" style={{ padding: "8px 0" }}>{formatPercent(item.progress, item.readiness_pct ?? item.readiness_percent)}</td>
+                      <td align="right" style={{ padding: "8px 0" }}>{asString(item.required_qty ?? item.total_planned_qty)}</td>
+                      <td align="right" style={{ padding: "8px 0" }}>{asString(item.available_qty ?? item.total_ready_qty)}</td>
+                      <td align="right" style={{ padding: "8px 0" }}>{asString(item.missing_qty ?? item.missing_items_count ?? item.total_missing_qty)}</td>
+                      <td style={{ padding: "8px 0" }}>{formatDateTime(item.eta_at)}</td>
+                      <td style={{ padding: "8px 0" }}>{formatBoolean(item.sla_risk)}</td>
                       <td style={{ padding: "8px 0" }}>{asString(item.risk_reason)}</td>
                     </tr>
                   ))}
