@@ -20,7 +20,7 @@
 
       ensureRequiredColumns_(read.headers, REQUIRED_COLUMNS, SHEET.SHIPMENT_PLAN_IMPORT);
 
-      const stagedRows = read.rows.filter((row) => str_(row.status).toLowerCase() === 'staged');
+      const stagedRows = read.rows.filter((row) => asString_(row.status).toLowerCase() === 'staged');
       if (stagedRows.length === 0) {
         return {
           ok: true,
@@ -30,7 +30,7 @@
       }
 
       const latestBatchId = pickLatestBatchId_(stagedRows);
-      const rows = stagedRows.filter((row) => str_(row.import_batch_id) === latestBatchId);
+      const rows = stagedRows.filter((row) => asString_(row.import_batch_id) === latestBatchId);
 
       return {
         ok: true,
@@ -46,10 +46,10 @@
     const batches = {};
 
     for (let i = 0; i < rows.length; i++) {
-      const batchId = str_(rows[i].import_batch_id);
+      const batchId = asString_(rows[i].import_batch_id);
       if (!batchId) continue;
 
-      const pastedAt = str_(rows[i].pasted_at);
+      const pastedAt = asString_(rows[i].pasted_at);
       const current = batches[batchId];
       if (!current || pastedAt > current.pasted_at) {
         batches[batchId] = {
@@ -62,17 +62,21 @@
     return Object.keys(batches)
       .map((key) => batches[key])
       .sort((left, right) => {
-        const dateCompare = str_(right.pasted_at).localeCompare(str_(left.pasted_at));
+        const dateCompare = asString_(right.pasted_at).localeCompare(asString_(left.pasted_at));
         if (dateCompare !== 0) return dateCompare;
-        return str_(right.import_batch_id).localeCompare(str_(left.import_batch_id));
+        return asString_(right.import_batch_id).localeCompare(asString_(left.import_batch_id));
       })[0].import_batch_id;
+  }
+
+  function asString_(value) {
+    return String(value == null ? '' : value).trim();
   }
 
   function readSheetRows_(sheet) {
     const lastCol = sheet.getLastColumn();
     if (lastCol < 1) return { headers: [], rows: [] };
 
-    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map((value) => str_(value));
+    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map((value) => asString_(value));
     const lastRow = sheet.getLastRow();
     if (lastRow < 2) return { headers, rows: [] };
 

@@ -46,7 +46,7 @@
     'carrier_type',
     'carrier_name',
     'booking_ref',
-    'sku_id_or_article',
+    'products_sku',
     'sku_name',
     'planned_qty',
     'comment_logistic',
@@ -183,19 +183,6 @@
 
       appendStagingRows_(stagingSheet, prepared.staged_rows);
 
-      logImportEventOnce_({
-        event_type: EVENT_TYPE.COMMITTED,
-        import_batch_id: importBatchId,
-        request_id: requestId,
-        ctx,
-        payload_json: {
-          import_batch_id: importBatchId,
-          request_id: requestId,
-          rows_count: prepared.stats.rows_count,
-          shipments_count: prepared.stats.shipments_count,
-          source_table_values: prepared.stats.source_table_values,
-        },
-      });
       Idemp_.put_(requestId, ACTION_COMMIT);
 
       return {
@@ -243,7 +230,7 @@
         carrier_type: row.carrier_type,
         carrier_name: row.carrier_name,
         booking_ref: row.booking_ref,
-        sku_id_or_article: row.products_sku,
+        products_sku: row.products_sku,
         sku_name: row.sku_name,
         planned_qty: row.planned_qty,
         comment_logistic: row.comment_logistic,
@@ -612,7 +599,7 @@
       carrier_type: str_(row.carrier_type),
       carrier_name: str_(row.carrier_name),
       booking_ref: str_(row.booking_ref),
-      products_sku: str_(row.sku_id_or_article),
+      products_sku: str_(row.products_sku),
       sku_name: str_(row.sku_name),
       planned_qty: numberOrZero_(row.planned_qty),
       comment_logistic: str_(row.comment_logistic),
