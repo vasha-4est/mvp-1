@@ -180,18 +180,18 @@ function parseTimestamp(value: string | null): number {
   return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
 }
 
-function compareShipmentPriority(left: ShipmentReadinessItem, right: ShipmentReadinessItem): number {
-  const reasonRank = (value: ShipmentReadinessItem["sla_risk_reason"]) => {
-    if (value === "deadline_passed_not_ready") return 0;
-    if (value === "eta_after_deadline") return 1;
-    if (value === "near_deadline_partial_ready") return 2;
-    return 3;
-  };
-
+function compareAtRiskShipments(left: ShipmentReadinessItem, right: ShipmentReadinessItem): number {
   return (
-    reasonRank(left.sla_risk_reason) - reasonRank(right.sla_risk_reason) ||
     parseTimestamp(left.deadline_at) - parseTimestamp(right.deadline_at) ||
     left.readiness_percent - right.readiness_percent ||
+    left.shipment_id.localeCompare(right.shipment_id)
+  );
+}
+
+function compareNeedsAttentionShipments(left: ShipmentReadinessItem, right: ShipmentReadinessItem): number {
+  return (
+    left.readiness_percent - right.readiness_percent ||
+    parseTimestamp(left.deadline_at) - parseTimestamp(right.deadline_at) ||
     left.shipment_id.localeCompare(right.shipment_id)
   );
 }
@@ -219,16 +219,14 @@ async function getShipmentReadinessSection(requestId: string): Promise<ShipmentR
   }
 
   const atRisk = readiness.shipments
-    .filter((shipment) => shipment.sla_risk)
-    .sort(compareShipmentPriority)
+    .filter((shipment) => shipment.sla_risk === true)
+    .sort(compareAtRiskShipments)
     .slice(0, 5)
     .map(projectPriorityItem);
 
   const needsAttention = readiness.shipments
-    .filter(
-      (shipment) => shipment.status === "partial_ready" && shipment.sla_risk_reason === "near_deadline_partial_ready"
-    )
-    .sort(compareShipmentPriority)
+    .filter((shipment) => shipment.sla_risk === false && shipment.status !== "ready")
+    .sort(compareNeedsAttentionShipments)
     .slice(0, 5)
     .map(projectPriorityItem);
 
