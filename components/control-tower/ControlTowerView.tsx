@@ -25,6 +25,24 @@ function asArray(value: unknown): Array<Record<string, unknown>> {
     .filter((item): item is Record<string, unknown> => item !== null);
 }
 
+type ProductionPlanSection = {
+  summary?: {
+    shipment_count?: number | null;
+    sku_count?: number | null;
+    demand_qty?: number | null;
+    available_qty?: number | null;
+    covered_qty?: number | null;
+    production_qty?: number | null;
+    urgent_skus?: number | null;
+  };
+  items?: Array<{
+    sku_id?: string | null;
+    production_qty?: number | null;
+    earliest_deadline_at?: string | null;
+    priority_reason?: string | null;
+  }>;
+};
+
 function formatNumber(value: unknown): string {
   return typeof value === "number" ? value.toLocaleString() : "—";
 }
@@ -95,6 +113,9 @@ export function ControlTowerView() {
   const topShort = asArray(deficit.top_short_skus);
 
   const shipmentsReadiness = asArray(sections.shipments_readiness);
+  const productionPlan = asRecord(sections.production_plan) as ProductionPlanSection | null;
+  const productionPlanSummary = asRecord(productionPlan?.summary) ?? {};
+  const productionPlanItems = asArray(productionPlan?.items);
 
   const inventory = asRecord(sections.inventory) ?? {};
   const topAvailable = asArray(inventory.top_available);
@@ -140,6 +161,30 @@ export function ControlTowerView() {
               {shipmentsReadiness.map((item, idx) => (
                 <li key={`${String(item.shipment_id ?? idx)}-${idx}`}>
                   {String(item.shipment_id ?? "—")}: {formatNumber(item.readiness_percent)}% ({String(item.status ?? "—")})
+                </li>
+              ))}
+            </ol>
+          )}
+        </Section>
+
+        <Section title="Production Plan">
+          <p style={{ margin: "0 0 8px" }}>
+            <strong>Demand:</strong> {formatNumber(productionPlanSummary.demand_qty)}
+          </p>
+          <p style={{ margin: "0 0 8px" }}>
+            <strong>Production:</strong> {formatNumber(productionPlanSummary.production_qty)}
+          </p>
+          <p style={{ margin: "0 0 8px" }}>
+            <strong>Urgent SKUs:</strong> {formatNumber(productionPlanSummary.urgent_skus)}
+          </p>
+          {productionPlanItems.length === 0 ? (
+            <EmptyState message="No production plan priorities yet." />
+          ) : (
+            <ol style={{ margin: 0, paddingLeft: 18 }}>
+              {productionPlanItems.map((item, idx) => (
+                <li key={`${String(item.sku_id ?? idx)}-${idx}`}>
+                  {String(item.sku_id ?? "—")}: {formatNumber(item.production_qty)} needed
+                  {item.earliest_deadline_at ? `, deadline ${formatDate(item.earliest_deadline_at)}` : ""}
                 </li>
               ))}
             </ol>

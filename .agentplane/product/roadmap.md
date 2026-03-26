@@ -18,7 +18,7 @@ DONE:
 - Payroll engine
 
 LOGISTICS:
-- Shipment plan import — LOCAL DONE / pending merge + deployed GAS parity
+- Shipment plan import — DONE / merged, deployed GAS parity to verify
 
 ---
 
@@ -133,9 +133,9 @@ KEY:
 
 ---
 
-## ⚠️ PHASE 2 — LOGISTICS INPUT (IN PROGRESS)
+## ✅ PHASE 2 — LOGISTICS INPUT (DONE / DEPLOY PARITY PENDING)
 
-### PR-117 — Shipment plan import workspace (DONE LOCAL / PENDING MERGE)
+### PR-117 — Shipment plan import workspace (DONE / MERGED)
 
 - robust import
 - preview
@@ -241,7 +241,7 @@ shipment_plan → demand → production_plan
 1. ❌ no production layer
 2. ❌ no picking UI
 3. ❌ no execution loop
-4. ⚠️ shipment import still depends on deployed GAS parity after local completion
+4. ⚠️ deployed GAS parity for shipment import still needs final confirmation
 
 ---
 
@@ -251,15 +251,15 @@ shipment_plan → demand → production_plan
 |------------|--------|
 | Backend     | 85%    |
 | KPI         | 90%    |
-| Logistics   | 80%    |
+| Logistics   | 85%    |
 | Production  | 20%    |
 | Execution   | 25%    |
 | Decision    | 30%    |
-| UI          | 45%    |
+| UI          | 50%    |
 
 ---
 
-## TOTAL: ~65%
+## TOTAL: ~68%
 
 ---
 

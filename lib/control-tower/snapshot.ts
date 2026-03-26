@@ -1,5 +1,6 @@
 import { parseErrorPayload, type ParsedGasError } from "@/lib/api/gasError";
 import { callGas } from "@/lib/integrations/gasClient";
+import { getProductionPlan } from "@/lib/productionPlan/getProductionPlan";
 import { getShipmentsReadiness, type ShipmentReadinessItem } from "@/lib/shipments/readiness";
 
 type ShipmentReadinessSummary = {
@@ -33,6 +34,32 @@ type ShipmentReadinessSection = {
   error: { code: "SHIPMENT_READINESS_FETCH_FAILED" } | null;
 };
 
+type ProductionPlanSection = {
+  generated_at: string;
+  import_batch_id: string | null;
+  summary: {
+    shipment_count: number;
+    sku_count: number;
+    demand_qty: number;
+    available_qty: number;
+    covered_qty: number;
+    production_qty: number;
+    uncovered_qty: number;
+    urgent_skus: number;
+  };
+  items: Array<{
+    sku_id: string;
+    demand_qty: number;
+    available_qty: number;
+    production_qty: number;
+    shipment_count: number;
+    earliest_deadline_at: string | null;
+    coverage_status: "covered" | "short";
+    priority_reason: string;
+  }>;
+  error: { code: "PRODUCTION_PLAN_FETCH_FAILED" } | null;
+};
+
 export type ControlTowerSnapshot = {
   ok: true;
   generated_at: string;
@@ -62,6 +89,7 @@ export type ControlTowerSnapshot = {
     };
     recent_events: Array<Record<string, unknown>>;
     shipment_readiness: ShipmentReadinessSection;
+    production_plan: ProductionPlanSection;
   };
 };
 
@@ -98,6 +126,27 @@ function createShipmentReadinessFallback(): ShipmentReadinessSection {
     },
     error: {
       code: "SHIPMENT_READINESS_FETCH_FAILED",
+    },
+  };
+}
+
+function createProductionPlanFallback(): ProductionPlanSection {
+  return {
+    generated_at: new Date().toISOString(),
+    import_batch_id: null,
+    summary: {
+      shipment_count: 0,
+      sku_count: 0,
+      demand_qty: 0,
+      available_qty: 0,
+      covered_qty: 0,
+      production_qty: 0,
+      uncovered_qty: 0,
+      urgent_skus: 0,
+    },
+    items: [],
+    error: {
+      code: "PRODUCTION_PLAN_FETCH_FAILED",
     },
   };
 }
@@ -242,6 +291,31 @@ async function getShipmentReadinessSection(requestId: string): Promise<ShipmentR
   };
 }
 
+async function getProductionPlanSection(requestId: string): Promise<ProductionPlanSection> {
+  const productionPlan = await getProductionPlan(requestId);
+
+  if (productionPlan.ok === false) {
+    return createProductionPlanFallback();
+  }
+
+  return {
+    generated_at: productionPlan.data.generated_at,
+    import_batch_id: productionPlan.data.import_batch_id,
+    summary: productionPlan.data.summary,
+    items: productionPlan.data.items.slice(0, 5).map((item) => ({
+      sku_id: item.sku_id,
+      demand_qty: item.demand_qty,
+      available_qty: item.available_qty,
+      production_qty: item.production_qty,
+      shipment_count: item.shipment_count,
+      earliest_deadline_at: item.earliest_deadline_at,
+      coverage_status: item.coverage_status,
+      priority_reason: item.priority_reason,
+    })),
+    error: null,
+  };
+}
+
 export async function getControlTowerSnapshot(requestId: string): Promise<ControlTowerResult> {
   const response = await callGas<ControlTowerSnapshot>("control_tower.read", {}, requestId, {
     timeoutMs: 25_000,
@@ -257,6 +331,7 @@ export async function getControlTowerSnapshot(requestId: string): Promise<Contro
   }
 
   const shipmentReadiness = await getShipmentReadinessSection(requestId).catch(() => createShipmentReadinessFallback());
+  const productionPlan = await getProductionPlanSection(requestId).catch(() => createProductionPlanFallback());
 
   return {
     ok: true,
@@ -265,6 +340,7 @@ export async function getControlTowerSnapshot(requestId: string): Promise<Contro
       sections: {
         ...response.data.sections,
         shipment_readiness: shipmentReadiness,
+        production_plan: productionPlan,
       },
     },
   };
