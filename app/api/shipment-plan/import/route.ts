@@ -6,7 +6,7 @@ import {
   parseShipmentPlanImportBody,
 } from "@/lib/shipmentPlan/service";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
-import { requireOwner } from "@/lib/server/guards";
+import { requireAnyRole } from "@/lib/server/guards";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, {
@@ -27,7 +27,7 @@ function statusForCode(code: string): number {
 
 export async function POST(request: Request) {
   const requestId = request.headers.get(REQUEST_ID_HEADER)?.trim() ?? "";
-  const auth = requireOwner(request);
+  const auth = requireAnyRole(request, ["OWNER", "COO"]);
   if (auth.ok === false) {
     return auth.response;
   }

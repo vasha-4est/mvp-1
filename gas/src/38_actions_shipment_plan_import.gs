@@ -181,7 +181,9 @@
         },
       });
 
+      const stagedRowsToSupersede = collectExistingStagedRowsToSupersede_(stagingSheet);
       appendStagingRows_(stagingSheet, prepared.staged_rows);
+      supersedeExistingStagedRows_(stagingSheet, stagedRowsToSupersede, importBatchId);
 
       Idemp_.put_(requestId, ACTION_COMMIT);
 
@@ -420,6 +422,50 @@
 
     const startRow = sheet.getLastRow() + 1;
     sheet.getRange(startRow, 1, values.length, header.length).setValues(values);
+  }
+
+  function collectExistingStagedRowsToSupersede_(stagingSheet) {
+    const sheet = stagingSheet.sheet;
+    const header = stagingSheet.header;
+    const statusIdx = header.indexOf('status');
+    if (statusIdx === -1) return [];
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return [];
+
+    const values = sheet.getRange(2, 1, lastRow - 1, header.length).getValues();
+    const rowNumbers = [];
+
+    for (let i = 0; i < values.length; i++) {
+      if (str_(values[i][statusIdx]).toLowerCase() !== 'staged') continue;
+      rowNumbers.push(i + 2);
+    }
+
+    return rowNumbers;
+  }
+
+  function supersedeExistingStagedRows_(stagingSheet, rowNumbers, nextImportBatchId) {
+    if (!rowNumbers || rowNumbers.length === 0) return;
+
+    const sheet = stagingSheet.sheet;
+    const header = stagingSheet.header;
+    const statusIdx = header.indexOf('status');
+    if (statusIdx === -1) return;
+
+    const errorIdx = header.indexOf('error');
+
+    for (let j = 0; j < rowNumbers.length; j++) {
+      const current = sheet.getRange(rowNumbers[j], 1, 1, header.length).getValues()[0];
+      if (str_(current[statusIdx]).toLowerCase() !== 'staged') continue;
+
+      const next = current.slice();
+      next[statusIdx] = 'superseded';
+      if (errorIdx !== -1) {
+        next[errorIdx] = 'superseded by import_batch_id ' + str_(nextImportBatchId);
+      }
+
+      sheet.getRange(rowNumbers[j], 1, 1, header.length).setValues([next]);
+    }
   }
 
   function findReplay_(requestId) {

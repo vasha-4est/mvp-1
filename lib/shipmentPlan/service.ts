@@ -334,7 +334,12 @@ export async function validateShipmentPlanImport(input: {
   const response = await callGas<GasValidationResponse>(
     "shipment_plan_import.validate",
     { rows: input.rows },
-    input.requestId
+    input.requestId,
+    {
+      timeoutMs: 20_000,
+      retries: 1,
+      retryBackoffMs: 500,
+    }
   );
 
   if (!response.ok || !response.data) {
@@ -365,7 +370,12 @@ export async function commitShipmentPlanImport(input: {
       actor_user_id: input.actorUserId,
       actor_role_id: input.actorRoleId,
     },
-    input.requestId
+    input.requestId,
+    {
+      timeoutMs: 30_000,
+      retries: 1,
+      retryBackoffMs: 750,
+    }
   );
 
   if (!response.ok || !response.data) {
