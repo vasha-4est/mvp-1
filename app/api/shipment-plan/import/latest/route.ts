@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
 
-import {
-  parseShipmentPlanImportBody,
-  validateShipmentPlanImport,
-} from "@/lib/shipmentPlan/service";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
+import { readLatestStagedShipmentPlanBatch } from "@/lib/shipmentPlan/readLatestStagedBatch";
 import { requireAnyRole } from "@/lib/server/guards";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
@@ -19,41 +16,19 @@ function json(requestId: string, status: number, body: Record<string, unknown>) 
 function statusForCode(code: string): number {
   if (code === "UNAUTHORIZED") return 401;
   if (code === "FORBIDDEN") return 403;
-  if (code === "BAD_REQUEST" || code === "VALIDATION_ERROR" || code === "INVALID_PRODUCTS_SKU_SCHEMA") return 400;
+  if (code === "NOT_FOUND") return 404;
+  if (code === "BAD_REQUEST" || code === "VALIDATION_ERROR") return 400;
+  if (code === "SHEET_MISSING") return 500;
   return 502;
 }
 
-export async function POST(request: Request) {
+export async function GET(request: Request) {
   const auth = requireAnyRole(request, ["OWNER", "COO"]);
   if (auth.ok === false) {
     return auth.response;
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return json(auth.requestId, 400, {
-      ok: false,
-      code: "VALIDATION_ERROR",
-      error: "Invalid JSON body",
-    });
-  }
-
-  const parsed = parseShipmentPlanImportBody(body);
-  if (parsed.ok === false) {
-    return json(auth.requestId, 400, {
-      ok: false,
-      code: parsed.code,
-      error: parsed.error,
-    });
-  }
-
-  const result = await validateShipmentPlanImport({
-    requestId: auth.requestId,
-    rows: parsed.rows,
-  });
-
+  const result = await readLatestStagedShipmentPlanBatch(auth.requestId);
   if (result.ok === false) {
     return json(auth.requestId, statusForCode(result.code), {
       ok: false,
@@ -63,12 +38,24 @@ export async function POST(request: Request) {
     });
   }
 
+  const shipments = new Set<string>();
+  let latestPastedAt: string | null = null;
+
+  for (const row of result.rows) {
+    shipments.add(row.shipment_id);
+    if (row.pasted_at && (!latestPastedAt || row.pasted_at > latestPastedAt)) {
+      latestPastedAt = row.pasted_at;
+    }
+  }
+
   return json(auth.requestId, 200, {
     ok: true,
     import_batch_id: result.import_batch_id,
-    valid: result.valid,
-    stats: result.stats,
-    normalized_rows: result.normalized_rows,
-    errors: result.errors,
+    stats: {
+      rows_count: result.rows.length,
+      shipments_count: shipments.size,
+      latest_pasted_at: latestPastedAt,
+    },
+    rows: result.rows,
   });
 }

@@ -222,7 +222,6 @@ export default async function OwnerDashboardPage({
           })}
         </ul>
       </section>
-
       {debugEnabled ? (
         <section>
           <h2>Debug</h2>

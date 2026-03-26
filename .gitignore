@@ -21,3 +21,16 @@ local_dev_runbook.md
 
 # typeScript incremental build
 *.tsbuildinfo
+
+# agentplane: ignore runtime/transient workspace artifacts
+.agentplane/worktrees
+.agentplane/cache
+.agentplane/recipes-cache
+.agentplane/.upgrade
+.agentplane/.release
+.agentplane/upgrade
+.agentplane/tasks.json
+AGENTS.md.bak-*
+CLAUDE.md.bak-*
+.agentplane/agents/*.bak-*
+.agentplane/policy/**/*.bak-*
