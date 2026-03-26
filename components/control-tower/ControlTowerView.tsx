@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
+import { formatDateTime as formatDateTimeCommon } from "@/lib/ui/formatDateTime";
+
 type LoadState =
   | { status: "loading" }
   | { status: "ready"; payload: unknown; errorMessage?: string };
@@ -48,16 +50,7 @@ function formatNumber(value: unknown): string {
 }
 
 function formatDate(value: unknown): string {
-  if (typeof value !== "string" || !value.trim()) {
-    return "—";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString();
+  return formatDateTimeCommon(value);
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {

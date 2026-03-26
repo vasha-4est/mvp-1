@@ -4,13 +4,14 @@
 
 # 1. CURRENT STATE
 
-## Backend (~85%)
+## Backend (~88%)
 
 DONE:
 - Batch Engine (FSM, idempotency, locking)
 - Inventory Engine (reserve/release/moves)
 - Picking core (partial)
 - Shipment Readiness Engine
+- Production Planning Engine
 - Control Tower aggregation
 - KPI layer
 - Alerts / thresholds
@@ -22,10 +23,11 @@ LOGISTICS:
 
 ---
 
-## Frontend (~50%)
+## Frontend (~55%)
 
 - Control Tower UI — basic
 - KPI dashboard — exists, not actionable
+- Production Plan UI — actionable read-only
 - Stations — read-only
 
 MISSING:
@@ -149,13 +151,18 @@ KEY:
 
 ## 🔥 PHASE 3 — PRODUCTION CORE (CRITICAL)
 
-### PR-118 — Production Planning Engine
+### PR-118 — Production Planning Engine (DONE / MERGED)
 
 shipment_plan → demand → production_plan
 
+- dedicated `/production/plan` workspace
+- Control Tower production-plan summary
+- actionable shortage priorities only
+- verified with staged demo batch `IMP-PR118-DEMO-001`
+
 ---
 
-### PR-119 — Production Launch Engine
+### PR-119 — Production Launch Engine (NEXT LOCKED STEP)
 
 - take into work
 - assign worker
@@ -238,7 +245,7 @@ shipment_plan → demand → production_plan
 
 # 4. CRITICAL GAPS
 
-1. ❌ no production layer
+1. ⚠️ production planning exists, but no launch/take-into-work flow yet
 2. ❌ no picking UI
 3. ❌ no execution loop
 4. ⚠️ deployed GAS parity for shipment import still needs final confirmation
@@ -249,13 +256,13 @@ shipment_plan → demand → production_plan
 
 | Area        | Progress |
 |------------|--------|
-| Backend     | 85%    |
+| Backend     | 88%    |
 | KPI         | 90%    |
 | Logistics   | 85%    |
-| Production  | 20%    |
+| Production  | 40%    |
 | Execution   | 25%    |
 | Decision    | 30%    |
-| UI          | 50%    |
+| UI          | 55%    |
 
 ---
 

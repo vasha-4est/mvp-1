@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { getLocalLatestShipmentPlanBatchFallback, isDevFallbackEnabled, withDevFastTimeout } from "@/lib/dev/localReadFallbacks";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { readLatestStagedShipmentPlanBatch } from "@/lib/shipmentPlan/readLatestStagedBatch";
 import { requireAnyRole } from "@/lib/server/guards";
@@ -28,8 +29,26 @@ export async function GET(request: Request) {
     return auth.response;
   }
 
-  const result = await readLatestStagedShipmentPlanBatch(auth.requestId);
+  const result = await withDevFastTimeout(readLatestStagedShipmentPlanBatch(auth.requestId), {
+    ok: true as const,
+    ...getLocalLatestShipmentPlanBatchFallback(),
+  });
   if (result.ok === false) {
+    if (isDevFallbackEnabled()) {
+      const fallback = getLocalLatestShipmentPlanBatchFallback();
+      return json(auth.requestId, 200, {
+        ok: true,
+        import_batch_id: fallback.import_batch_id,
+        stats: {
+          rows_count: fallback.rows.length,
+          shipments_count: new Set(fallback.rows.map((row) => row.shipment_id)).size,
+          latest_pasted_at: fallback.rows[0]?.pasted_at ?? null,
+        },
+        rows: fallback.rows,
+        fallback: "local",
+      });
+    }
+
     return json(auth.requestId, statusForCode(result.code), {
       ok: false,
       code: result.code,

@@ -86,6 +86,7 @@ export async function GET(request: Request) {
         sku_name: item.sku_name,
         sku_type: item.sku_type,
         sub_category: item.sub_category,
+        photo_url: item.photo_url ?? null,
       })),
     });
   } catch {

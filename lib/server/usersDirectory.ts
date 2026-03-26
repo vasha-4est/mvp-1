@@ -41,7 +41,12 @@ export async function readUsersDirectoryFromGas(requestId: string): Promise<{
   const response = await callGas<{ users?: UsersDirectoryUser[]; debug?: UsersDirectoryDebug }>(
     "control_model.users_directory.read",
     {},
-    requestId
+    requestId,
+    {
+      timeoutMs: 25_000,
+      retries: 1,
+      retryBackoffMs: 500,
+    }
   );
 
   if (!response.ok || !response.data) {
@@ -80,7 +85,12 @@ export async function writeUsersDirectoryHashes(
   const response = await callGas<{ updated?: number; mode?: "password_hash" | "password" }>(
     "control_model.users_directory.update_passwords",
     { updates },
-    requestId
+    requestId,
+    {
+      timeoutMs: 25_000,
+      retries: 1,
+      retryBackoffMs: 500,
+    }
   );
 
   if (!response.ok || !response.data) {
