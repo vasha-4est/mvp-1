@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { formatDateTime as formatDateTimeCommon } from "@/lib/ui/formatDateTime";
+
 type ShipmentReadinessRow = {
   shipment_id?: unknown;
   status?: unknown;
@@ -50,19 +52,7 @@ function asString(value: unknown): string {
 }
 
 function formatDateTime(value: unknown): string {
-  if (typeof value !== "string" || !value.trim()) {
-    return "—";
-  }
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(parsed);
+  return formatDateTimeCommon(value);
 }
 
 function formatPercent(value: unknown, fallback: unknown): string {

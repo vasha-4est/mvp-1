@@ -1,17 +1,26 @@
 import { parseErrorPayload, type ParsedGasError } from "@/lib/api/gasError";
+import { listCatalogSkus } from "@/lib/catalog/listSkus";
 import { getInventoryBalances } from "@/lib/inventory/getInventoryBalances";
 import { readLatestStagedShipmentPlanBatch } from "@/lib/shipmentPlan/readLatestStagedBatch";
 
-type ShipmentPlanRow = {
+export type ShipmentPlanRow = {
   shipment_id: string;
   deadline_at: string | null;
   products_sku: string;
   planned_qty: number;
 };
 
+export type InventoryBalanceItem = {
+  sku_id: string;
+  available_qty: number;
+};
+
 export type ProductionPlanItem = {
   sku_id: string;
+  sku_name: string | null;
+  photo_url: string | null;
   demand_qty: number;
+  inventory_qty: number;
   available_qty: number;
   covered_qty: number;
   production_qty: number;
@@ -132,42 +141,52 @@ function buildInventoryMap(items: Array<{ sku_id: string; available_qty: number 
   return bySku;
 }
 
-export async function getProductionPlan(requestId: string): Promise<ProductionPlanResult> {
-  const generatedAt = new Date();
-
-  const planResponse = await readLatestStagedShipmentPlanBatch(requestId);
-  if (planResponse.ok === false) {
-    return planResponse;
+function buildSkuMetaMap(
+  items: Array<{
+    sku_id: string;
+    sku_name?: string | null;
+    photo_url?: string | null;
+  }>
+): Map<string, { sku_name: string | null; photo_url: string | null }> {
+  const bySku = new Map<string, { sku_name: string | null; photo_url: string | null }>();
+  for (const item of items) {
+    if (!item.sku_id) continue;
+    bySku.set(item.sku_id, {
+      sku_name: item.sku_name ?? null,
+      photo_url: item.photo_url ?? null,
+    });
   }
+  return bySku;
+}
 
-  if (planResponse.rows.length === 0) {
+export function buildProductionPlanPayload(params: {
+  generatedAt: Date;
+  importBatchId: string | null;
+  planRows: ShipmentPlanRow[];
+  inventoryItems: InventoryBalanceItem[];
+  catalogItems?: Array<{ sku_id: string; sku_name?: string | null; photo_url?: string | null }>;
+}): ProductionPlanPayload {
+  if (params.planRows.length === 0) {
     return {
       ok: true,
-      data: {
-        ok: true,
-        generated_at: generatedAt.toISOString(),
-        import_batch_id: null,
-        summary: {
-          shipment_count: 0,
-          sku_count: 0,
-          demand_qty: 0,
-          available_qty: 0,
-          covered_qty: 0,
-          production_qty: 0,
-          uncovered_qty: 0,
-          urgent_skus: 0,
-        },
-        items: [],
+      generated_at: params.generatedAt.toISOString(),
+      import_batch_id: params.importBatchId,
+      summary: {
+        shipment_count: 0,
+        sku_count: 0,
+        demand_qty: 0,
+        available_qty: 0,
+        covered_qty: 0,
+        production_qty: 0,
+        uncovered_qty: 0,
+        urgent_skus: 0,
       },
+      items: [],
     };
   }
 
-  const inventoryResponse = await getInventoryBalances(requestId);
-  if (inventoryResponse.ok === false) {
-    return { ok: false, ...normalizeError(inventoryResponse.error, "Failed to read inventory balances") };
-  }
-
-  const availableBySku = buildInventoryMap(inventoryResponse.items);
+  const availableBySku = buildInventoryMap(params.inventoryItems);
+  const skuMetaBySku = buildSkuMetaMap(params.catalogItems ?? []);
   const grouped = new Map<
     string,
     {
@@ -182,7 +201,7 @@ export async function getProductionPlan(requestId: string): Promise<ProductionPl
 
   const uniqueShipmentIds = new Set<string>();
 
-  for (const row of planResponse.rows) {
+  for (const row of params.planRows) {
     const skuId = row.products_sku.trim();
     const shipmentId = row.shipment_id.trim();
     if (!skuId || !shipmentId) continue;
@@ -223,10 +242,14 @@ export async function getProductionPlan(requestId: string): Promise<ProductionPl
       const availableQty = Math.max(0, item.available_qty);
       const coveredQty = Math.min(demandQty, availableQty);
       const productionQty = Math.max(demandQty - availableQty, 0);
+      const skuMeta = skuMetaBySku.get(item.sku_id);
 
       return {
         sku_id: item.sku_id,
+        sku_name: skuMeta?.sku_name ?? null,
+        photo_url: skuMeta?.photo_url ?? null,
         demand_qty: demandQty,
+        inventory_qty: availableQty,
         available_qty: availableQty,
         covered_qty: coveredQty,
         production_qty: productionQty,
@@ -255,12 +278,43 @@ export async function getProductionPlan(requestId: string): Promise<ProductionPl
 
   return {
     ok: true,
-    data: {
-      ok: true,
-      generated_at: generatedAt.toISOString(),
-      import_batch_id: planResponse.import_batch_id,
-      summary,
-      items: actionableItems,
-    },
+    generated_at: params.generatedAt.toISOString(),
+    import_batch_id: params.importBatchId,
+    summary,
+    items: actionableItems,
+  };
+}
+
+export async function getProductionPlan(requestId: string): Promise<ProductionPlanResult> {
+  const generatedAt = new Date();
+  const shipmentPlanRequestId = `${requestId}:shipment-plan`;
+  const inventoryRequestId = `${requestId}:inventory-balances`;
+  const catalogRequestId = `${requestId}:catalog-skus`;
+
+  const planResponse = await readLatestStagedShipmentPlanBatch(shipmentPlanRequestId);
+  if (planResponse.ok === false) {
+    return planResponse;
+  }
+
+  if (planResponse.rows.length === 0) {
+    return { ok: true, data: buildProductionPlanPayload({ generatedAt, importBatchId: null, planRows: [], inventoryItems: [] }) };
+  }
+
+  const inventoryResponse = await getInventoryBalances(inventoryRequestId);
+  if (inventoryResponse.ok === false) {
+    return { ok: false, ...normalizeError(inventoryResponse.error, "Failed to read inventory balances") };
+  }
+
+  const catalogResponse = await listCatalogSkus(catalogRequestId, { active: 1 });
+
+  return {
+    ok: true,
+    data: buildProductionPlanPayload({
+      generatedAt,
+      importBatchId: planResponse.import_batch_id,
+      planRows: planResponse.rows,
+      inventoryItems: inventoryResponse.items,
+      catalogItems: catalogResponse.ok ? catalogResponse.items : [],
+    }),
   };
 }

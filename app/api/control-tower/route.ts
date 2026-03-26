@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { getLocalControlTowerFallback, withDevFastTimeout } from "@/lib/dev/localReadFallbacks";
 import { statusForErrorCode } from "@/lib/api/gasError";
 import { getControlTowerSnapshot } from "@/lib/control-tower/snapshot";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
@@ -21,7 +22,10 @@ export async function GET(request: Request) {
     return auth.response;
   }
 
-  const result = await getControlTowerSnapshot(auth.requestId);
+  const result = await withDevFastTimeout(getControlTowerSnapshot(auth.requestId), {
+    ok: true as const,
+    data: getLocalControlTowerFallback(),
+  });
 
   if (result.ok === false) {
     return json(auth.requestId, statusForErrorCode(result.code), {

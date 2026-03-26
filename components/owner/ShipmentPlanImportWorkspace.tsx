@@ -6,6 +6,7 @@ import {
   parseShipmentPlanPastedRows,
   shipmentPlanImportTemplateHeaders,
 } from "@/lib/shipmentPlan/parsePastedRows";
+import { formatDateTime as formatDateTimeCommon } from "@/lib/ui/formatDateTime";
 
 const REQUEST_ID_HEADER = "x-request-id";
 
@@ -67,17 +68,7 @@ function createRequestId(): string {
 }
 
 function formatDateTime(value: string | null | undefined): string {
-  if (!value) return "n/a";
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(parsed);
+  return formatDateTimeCommon(value, { empty: "n/a" });
 }
 
 function summarizeError(error: ValidationError): string {
