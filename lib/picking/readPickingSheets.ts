@@ -41,6 +41,13 @@ export type PickingListSummary = {
   created_at: string | null;
   status: string | null;
   warehouse_key: string | null;
+  shipment_id: string | null;
+  direction: string | null;
+  counterparty: string | null;
+  destination: string | null;
+  destination_warehouse: string | null;
+  planned_date: string | null;
+  deadline_at: string | null;
   planned_lines: number | null;
   planned_qty: number | null;
 };
@@ -63,6 +70,15 @@ function normalizePickingList(row: PickingListRow): PickingListSummary | null {
     created_at: str(row.created_at),
     status: str(row.status),
     warehouse_key: str(row.warehouse_key),
+    shipment_id: str(row.shipment_id),
+    direction: str(row.direction ?? row.shipment_direction),
+    counterparty: str(row.counterparty ?? row.counterparty_name ?? row.customer),
+    destination: str(row.destination ?? row.destination_city ?? row.destination_name),
+    destination_warehouse: str(
+      row.destination_warehouse ?? row.destination_warehouse_key ?? row.destination_warehouse_name ?? row.warehouse_to ?? row.to_warehouse
+    ),
+    planned_date: str(row.planned_date ?? row.ship_date ?? row.shipment_date),
+    deadline_at: str(row.deadline_at ?? row.deadline ?? row.sla_deadline_at),
     planned_lines: num(row.planned_lines),
     planned_qty: num(row.planned_qty),
   };

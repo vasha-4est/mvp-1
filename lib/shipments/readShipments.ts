@@ -5,6 +5,12 @@ type ShipmentListItem = {
   shipment_id: string;
   created_at: string | null;
   status: string | null;
+  direction: string | null;
+  counterparty: string | null;
+  destination: string | null;
+  destination_warehouse: string | null;
+  planned_date: string | null;
+  deadline_at: string | null;
   warehouse_key: string | null;
   planned_lines: number | null;
   planned_qty: number | null;
@@ -81,6 +87,17 @@ function normalizeRequiredNumber(value: unknown): number {
   return normalizeNullableNumber(value) ?? 0;
 }
 
+function firstNonEmptyString(...values: unknown[]): string | null {
+  for (const value of values) {
+    const normalized = normalizeNullableString(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
 function parseShipments(rows: unknown): ShipmentListItem[] {
   if (!Array.isArray(rows)) {
     return [];
@@ -104,6 +121,18 @@ function parseShipments(rows: unknown): ShipmentListItem[] {
       shipment_id: shipmentId,
       created_at: normalizeNullableString(record.created_at),
       status: normalizeNullableString(record.status),
+      direction: firstNonEmptyString(record.direction, record.shipment_direction),
+      counterparty: firstNonEmptyString(record.counterparty, record.counterparty_name, record.customer),
+      destination: firstNonEmptyString(record.destination, record.destination_city, record.destination_name),
+      destination_warehouse: firstNonEmptyString(
+        record.destination_warehouse,
+        record.destination_warehouse_key,
+        record.destination_warehouse_name,
+        record.warehouse_to,
+        record.to_warehouse
+      ),
+      planned_date: firstNonEmptyString(record.planned_date, record.ship_date, record.shipment_date),
+      deadline_at: firstNonEmptyString(record.deadline_at, record.deadline, record.sla_deadline_at),
       warehouse_key: normalizeNullableString(record.warehouse_key),
       planned_lines: normalizeNullableNumber(record.planned_lines),
       planned_qty: normalizeNullableNumber(record.planned_qty),
