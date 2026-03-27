@@ -2,7 +2,9 @@
 import { NextResponse } from "next/server";
 
 import { statusForErrorCode } from "@/lib/api/gasError";
+import { withDevFastTimeout } from "@/lib/dev/localReadFallbacks";
 import { listCatalogSkus } from "@/lib/catalog/listSkus";
+import { listLocalCatalog, shouldUseLocalPickingFallback } from "@/lib/dev/pickingLocal";
 import type { SkuType } from "@/lib/validators/productsSku";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
@@ -65,17 +67,37 @@ export async function GET(request: Request) {
       });
     }
 
-    const result = await listCatalogSkus(requestId, {
+    const fallbackItems = listLocalCatalog(activeResult.value);
+    const result = await withDevFastTimeout(listCatalogSkus(requestId, {
       type: typeResult.value,
       active: activeResult.value,
+    }), {
+      ok: true as const,
+      items: fallbackItems,
     });
 
     if (result.ok === false) {
+      if (shouldUseLocalPickingFallback()) {
+        return json(requestId, 200, {
+          ok: true,
+          items: fallbackItems,
+          fallback: "local",
+        });
+      }
+
       return json(requestId, statusForErrorCode(result.code), {
         ok: false,
         error: result.error,
         code: result.code,
         ...(result.details ? { details: result.details } : {}),
+      });
+    }
+
+    if (shouldUseLocalPickingFallback() && result.items.length === 0 && fallbackItems.length > 0) {
+      return json(requestId, 200, {
+        ok: true,
+        items: fallbackItems,
+        fallback: "local",
       });
     }
 

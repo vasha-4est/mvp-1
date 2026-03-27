@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { parseErrorPayload } from "@/lib/api/gasError";
+import { createLocalPickingList, shouldUseLocalPickingFallback } from "@/lib/dev/pickingLocal";
 import { requireWritable } from "@/lib/flags/runtime";
 import { callGas } from "@/lib/integrations/gasClient";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
@@ -128,6 +129,19 @@ export async function POST(request: Request) {
   );
 
   if (!gas.ok || !gas.data) {
+    if (shouldUseLocalPickingFallback()) {
+      const fallback = await createLocalPickingList({
+        warehouse_key: warehouseKey,
+        lines,
+      });
+      return json(auth.requestId, fallback.replayed === true ? 200 : 201, {
+        ok: true,
+        ...(fallback.replayed === true ? { replayed: true } : {}),
+        picking_list_id: fallback.picking_list_id,
+        fallback: "local",
+      });
+    }
+
     return mapError(auth.requestId, (gas as { error?: unknown }).error);
   }
 

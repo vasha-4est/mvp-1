@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { withDevFastTimeout } from "@/lib/dev/localReadFallbacks";
 import { statusForErrorCode } from "@/lib/api/gasError";
+import { listCatalogSkus } from "@/lib/catalog/listSkus";
 import { getLocalProductionPlanFallback, shouldUseLocalProductionFallback } from "@/lib/dev/productionLaunchLocal";
 import { buildProductionPlanPayload, getProductionPlan, type InventoryBalanceItem, type ShipmentPlanRow } from "@/lib/productionPlan/getProductionPlan";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
@@ -23,6 +24,43 @@ function str(value: unknown): string {
 function num(value: unknown): number {
   const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value.trim()) : Number.NaN;
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function enrichWithCatalog(requestId: string, payload: ReturnType<typeof getLocalProductionPlanFallback>) {
+  const catalogResult = await withDevFastTimeout(listCatalogSkus(`${requestId}:catalog`, { active: 1 }), {
+    ok: true as const,
+    items: [],
+  });
+
+  if (catalogResult.ok === false || !Array.isArray(payload.items) || catalogResult.items.length === 0) {
+    return payload;
+  }
+
+  const catalogBySku = new Map(
+    catalogResult.items.map((item) => [
+      item.sku_id,
+      {
+        sku_name: item.sku_name ?? null,
+        photo_url: item.photo_url ?? null,
+      },
+    ])
+  );
+
+  return {
+    ...payload,
+    items: payload.items.map((item) => {
+      const meta = catalogBySku.get(item.sku_id);
+      if (!meta) {
+        return item;
+      }
+
+      return {
+        ...item,
+        sku_name: meta.sku_name || item.sku_name,
+        photo_url: meta.photo_url || item.photo_url,
+      };
+    }),
+  };
 }
 
 async function fallbackViaInternalRoutes(request: Request, requestId: string) {
@@ -100,12 +138,15 @@ async function fallbackViaInternalRoutes(request: Request, requestId: string) {
 
   return {
     ok: true as const,
-    data: buildProductionPlanPayload({
-      generatedAt: new Date(),
-      importBatchId: str(shipmentPayload?.import_batch_id) || null,
-      planRows: shipmentRows,
-      inventoryItems,
-    }),
+    data: await enrichWithCatalog(
+      requestId,
+      buildProductionPlanPayload({
+        generatedAt: new Date(),
+        importBatchId: str(shipmentPayload?.import_batch_id) || null,
+        planRows: shipmentRows,
+        inventoryItems,
+      })
+    ),
   };
 }
 
@@ -117,7 +158,7 @@ export async function GET(request: Request) {
 
   const result = await withDevFastTimeout(getProductionPlan(auth.requestId), {
     ok: true as const,
-    data: getLocalProductionPlanFallback(),
+    data: await enrichWithCatalog(auth.requestId, getLocalProductionPlanFallback()),
   });
 
   if (result.ok === false) {
@@ -130,7 +171,7 @@ export async function GET(request: Request) {
     }
 
     if (shouldUseLocalProductionFallback()) {
-      return json(auth.requestId, 200, getLocalProductionPlanFallback());
+      return json(auth.requestId, 200, await enrichWithCatalog(auth.requestId, getLocalProductionPlanFallback()));
     }
 
     return json(auth.requestId, fallback.status ?? statusForErrorCode(result.code), {
@@ -141,5 +182,5 @@ export async function GET(request: Request) {
     });
   }
 
-  return json(auth.requestId, 200, result.data);
+  return json(auth.requestId, 200, await enrichWithCatalog(auth.requestId, result.data));
 }

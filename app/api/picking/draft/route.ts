@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { withDevFastTimeout } from "@/lib/dev/localReadFallbacks";
-import { getLocalShipment, shouldUseLocalPickingFallback } from "@/lib/dev/pickingLocal";
+import { getLocalPickingDraft, shouldUseLocalPickingFallback } from "@/lib/dev/pickingLocal";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
-import { getShipmentWithLines } from "@/lib/shipments/readShipments";
+import { getPickingDraft } from "@/lib/picking/getPickingDraft";
 import { requireAnyRole } from "@/lib/server/guards";
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
@@ -15,37 +15,37 @@ function json(requestId: string, status: number, body: Record<string, unknown>) 
   });
 }
 
-function statusForShipmentsCode(code: string): number {
+function statusForDraftError(code: string): number {
   if (code === "NOT_FOUND") return 404;
   if (code === "BAD_REQUEST" || code === "VALIDATION_ERROR") return 400;
   if (code === "SHEET_MISSING") return 500;
   return 502;
 }
 
-export async function GET(request: Request, context: { params: { id: string } }) {
+export async function GET(request: Request) {
   const auth = requireAnyRole(request, ["OWNER", "COO"]);
   if (auth.ok === false) {
     return auth.response;
   }
 
-  const { id } = context.params;
-  const shipmentId = id.trim();
-
+  const shipmentId = new URL(request.url).searchParams.get("shipment_id")?.trim() ?? "";
   if (!shipmentId) {
-    return json(auth.requestId, 404, {
+    return json(auth.requestId, 400, {
       ok: false,
-      error: "Shipment not found",
-      code: "NOT_FOUND",
+      code: "VALIDATION_ERROR",
+      error: "shipment_id is required",
     });
   }
 
-  const localShipment = getLocalShipment(shipmentId);
+  const localDraft = getLocalPickingDraft(shipmentId);
   const result = await withDevFastTimeout(
-    getShipmentWithLines(auth.requestId, shipmentId),
-    localShipment
+    getPickingDraft(auth.requestId, shipmentId),
+    localDraft
       ? {
           ok: true as const,
-          data: localShipment,
+          shipment: localDraft.shipment,
+          summary: localDraft.summary,
+          lines: localDraft.lines,
         }
       : {
           ok: false as const,
@@ -53,30 +53,26 @@ export async function GET(request: Request, context: { params: { id: string } })
           error: "Shipment not found",
         }
   );
-
   if (result.ok === false) {
     if (shouldUseLocalPickingFallback()) {
-      if (localShipment) {
+      if (localDraft) {
         return json(auth.requestId, 200, {
           ok: true,
-          shipment: localShipment.shipment,
-          lines: localShipment.lines,
+          shipment: localDraft.shipment,
+          summary: localDraft.summary,
+          lines: localDraft.lines,
           fallback: "local",
         });
       }
     }
 
-    return json(auth.requestId, statusForShipmentsCode(result.code), {
+    return json(auth.requestId, statusForDraftError(result.code), {
       ok: false,
-      error: result.error,
       code: result.code,
+      error: result.error,
       ...(result.details ? { details: result.details } : {}),
     });
   }
 
-  return json(auth.requestId, 200, {
-    ok: true,
-    shipment: result.data.shipment,
-    lines: result.data.lines,
-  });
+  return json(auth.requestId, 200, result);
 }
