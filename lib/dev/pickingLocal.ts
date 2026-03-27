@@ -8,6 +8,12 @@ type LocalShipmentSummary = {
   shipment_id: string;
   created_at: string | null;
   status: string | null;
+  direction: string | null;
+  counterparty: string | null;
+  destination: string | null;
+  destination_warehouse: string | null;
+  planned_date: string | null;
+  deadline_at: string | null;
   warehouse_key: string | null;
   planned_lines: number | null;
   planned_qty: number | null;
@@ -26,6 +32,13 @@ type LocalPickingListSummary = {
   created_at: string | null;
   status: string | null;
   warehouse_key: string | null;
+  shipment_id: string | null;
+  direction: string | null;
+  counterparty: string | null;
+  destination: string | null;
+  destination_warehouse: string | null;
+  planned_date: string | null;
+  deadline_at: string | null;
   planned_lines: number | null;
   planned_qty: number | null;
 };
@@ -77,6 +90,42 @@ type DraftLine = {
 
 const DEMO_CREATED_AT = "2026-03-26T16:25:00.000Z";
 const DEMO_WAREHOUSE = "MAIN";
+const DEMO_SHIPMENT_CONTEXT: Record<
+  string,
+  {
+    direction: string;
+    counterparty: string;
+    destination: string;
+    destination_warehouse: string;
+    planned_date: string;
+    deadline_at: string;
+  }
+> = {
+  "SHP-PR118-001": {
+    direction: "outbound",
+    counterparty: "Wildberries",
+    destination: "Moscow",
+    destination_warehouse: "WB-Kotelniki",
+    planned_date: "2026-03-27",
+    deadline_at: "2026-03-27T09:00:00.000Z",
+  },
+  "SHP-PR118-002": {
+    direction: "outbound",
+    counterparty: "Ozon",
+    destination: "Moscow",
+    destination_warehouse: "OZ-South",
+    planned_date: "2026-03-27",
+    deadline_at: "2026-03-27T15:00:00.000Z",
+  },
+  "SHP-PR118-003": {
+    direction: "outbound",
+    counterparty: "Yandex Market",
+    destination: "Moscow",
+    destination_warehouse: "YM-Tomilino",
+    planned_date: "2026-03-28",
+    deadline_at: "2026-03-28T13:00:00.000Z",
+  },
+};
 
 const DEMO_INVENTORY: BalanceItem[] = [
   { sku_id: "OM-BM-Red(Dark)", location_id: "A-01", available_qty: 30, updated_at: DEMO_CREATED_AT },
@@ -123,10 +172,17 @@ function demoShipments(): LocalShipmentSummary[] {
   const linesMap = shipmentLinesById();
   return shipmentIds().map((shipmentId) => {
     const lines = linesMap.get(shipmentId) ?? [];
+    const context = DEMO_SHIPMENT_CONTEXT[shipmentId];
     return {
       shipment_id: shipmentId,
       created_at: DEMO_CREATED_AT,
       status: "planned",
+      direction: context?.direction ?? "outbound",
+      counterparty: context?.counterparty ?? "Demo counterparty",
+      destination: context?.destination ?? "Demo destination",
+      destination_warehouse: context?.destination_warehouse ?? "Demo warehouse",
+      planned_date: context?.planned_date ?? null,
+      deadline_at: context?.deadline_at ?? null,
       warehouse_key: DEMO_WAREHOUSE,
       planned_lines: lines.length,
       planned_qty: lines.reduce((sum, line) => sum + line.planned_qty, 0),
@@ -207,6 +263,13 @@ export async function getLocalPickingList(
 
 export async function createLocalPickingList(input: {
   warehouse_key: string;
+  shipment_id?: string | null;
+  direction?: string | null;
+  counterparty?: string | null;
+  destination?: string | null;
+  destination_warehouse?: string | null;
+  planned_date?: string | null;
+  deadline_at?: string | null;
   lines: Array<{ sku_id: string; location_id: string; qty: number }>;
 }): Promise<{ picking_list_id: string; replayed?: boolean }> {
   const store = await readStore();
@@ -240,6 +303,13 @@ export async function createLocalPickingList(input: {
     created_at: now,
     status: "new",
     warehouse_key: input.warehouse_key,
+    shipment_id: input.shipment_id ?? null,
+    direction: input.direction ?? null,
+    counterparty: input.counterparty ?? null,
+    destination: input.destination ?? null,
+    destination_warehouse: input.destination_warehouse ?? null,
+    planned_date: input.planned_date ?? null,
+    deadline_at: input.deadline_at ?? null,
     planned_lines: input.lines.length,
     planned_qty: input.lines.reduce((sum, line) => sum + line.qty, 0),
     lines: input.lines.map((line, index) => ({

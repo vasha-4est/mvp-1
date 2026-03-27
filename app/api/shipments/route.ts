@@ -8,6 +8,7 @@ import { requireAnyRole } from "@/lib/server/guards";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
+const DEFAULT_PAGE_SIZE = 10;
 
 function json(requestId: string, status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, {
@@ -41,6 +42,20 @@ function parseLimit(request: Request): { ok: true; limit: number } | { ok: false
   return { ok: true, limit: Math.min(parsed, MAX_LIMIT) };
 }
 
+function parsePositiveInt(value: string | null, fallback: number, max: number): number {
+  const parsed = Number(value ?? "");
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return fallback;
+  }
+
+  return Math.min(parsed, max);
+}
+
+function normalizeStatusFilter(value: string | null): string | null {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  return normalized && normalized !== "all" ? normalized : null;
+}
+
 export async function GET(request: Request) {
   const auth = requireAnyRole(request, ["OWNER", "COO"]);
   if (auth.ok === false) {
@@ -56,17 +71,36 @@ export async function GET(request: Request) {
     });
   }
 
-  const fallbackItems = listLocalShipments(limitResult.limit);
-  const result = await withDevFastTimeout(listShipments(auth.requestId, limitResult.limit), {
+  const url = new URL(request.url);
+  const page = parsePositiveInt(url.searchParams.get("page"), 1, 10_000);
+  const pageSize = parsePositiveInt(url.searchParams.get("pageSize"), DEFAULT_PAGE_SIZE, MAX_LIMIT);
+  const statusFilter = normalizeStatusFilter(url.searchParams.get("status"));
+  const fetchLimit = Math.max(limitResult.limit, MAX_LIMIT);
+
+  const fallbackItems = listLocalShipments(fetchLimit);
+  const result = await withDevFastTimeout(listShipments(auth.requestId, fetchLimit), {
     ok: true as const,
     data: fallbackItems,
   });
 
   if (result.ok === false) {
     if (shouldUseLocalPickingFallback()) {
+      const filteredFallbackItems = fallbackItems.filter((item) => {
+        if (!statusFilter) return true;
+        return (item.status ?? "").trim().toLowerCase() === statusFilter;
+      });
+      const totalItems = filteredFallbackItems.length;
+      const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+      const safePage = Math.min(page, totalPages);
+      const start = (safePage - 1) * pageSize;
       return json(auth.requestId, 200, {
         ok: true,
-        items: fallbackItems,
+        items: filteredFallbackItems.slice(start, start + pageSize),
+        page: safePage,
+        pageSize,
+        totalItems,
+        totalPages,
+        statusFilter,
         fallback: "local",
       });
     }
@@ -79,16 +113,36 @@ export async function GET(request: Request) {
     });
   }
 
+  const filteredItems = result.data.filter((item) => {
+    if (!statusFilter) return true;
+    return (item.status ?? "").trim().toLowerCase() === statusFilter;
+  });
+  const totalItems = filteredItems.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const items = filteredItems.slice(start, start + pageSize);
+
   if (shouldUseLocalPickingFallback() && result.data.length === 0 && fallbackItems.length > 0) {
     return json(auth.requestId, 200, {
       ok: true,
-      items: fallbackItems,
+      items: fallbackItems.slice(0, pageSize),
+      page: 1,
+      pageSize,
+      totalItems: fallbackItems.length,
+      totalPages: Math.max(1, Math.ceil(fallbackItems.length / pageSize)),
+      statusFilter,
       fallback: "local",
     });
   }
 
   return json(auth.requestId, 200, {
     ok: true,
-    items: result.data,
+    items,
+    page: safePage,
+    pageSize,
+    totalItems,
+    totalPages,
+    statusFilter,
   });
 }

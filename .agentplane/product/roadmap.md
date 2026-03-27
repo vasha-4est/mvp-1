@@ -182,13 +182,13 @@ shipment_plan → demand → production_plan
 
 ---
 
-### PR-121 — Picking Lists Engine + UI (LOCAL VALIDATED / MERGE PENDING)
+### PR-121 — Picking Lists Engine + UI (DONE / MERGED)
 
 - dedicated `/picking` workspace
 - shipment-driven draft suggestions from current inventory state
 - create governed picking lists
 - confirm picking lines
-- local smoke validated, roadmap completion waits for merge
+- merged after local smoke and UI validation
 
 ---
 
@@ -201,17 +201,32 @@ shipment_plan → demand → production_plan
 - add status filters and pagination to `Picking lists`
 - clarify shortage semantics (`available now` vs `requires production`)
 - support explicit `Rebuild draft` behavior without silently mutating existing picking lists
+- keep this step narrow: it improves the transitional `/picking` surface, but does not yet remodel execution around the real universal assembly-sheet workflow
 
 ---
 
 ### PR-123 — Focus Mode (assembly flow)
 
+- reframe `/picking` toward universal `assembly sheets` instead of marketplace-only shipment picking
+- canonical execution object = `1 counterparty = 1 assembly sheet`
+- support counterparties with one or many destination warehouses inside the same sheet
+- add sheet list view with compact / detailed modes
+- make matrix view operator-meaningful: `SKU x destination warehouse`
+- show warehouse priority and planned ship date above each destination column
+- make focus mode the primary picker workflow: one warehouse at a time, neighboring columns hidden
+- keep matrix mode for supervisors/logistics review
+- preserve additive migration from existing `picking_lists` / `picking_lines` instead of inventing a second parallel domain
+
 ---
 
 ### PR-124 — Assembly Actions
 
-- confirm work
-- link to picking
+- confirm work at cell level
+- auto-capture acting picker from authenticated user
+- require underpick reason when closing an incomplete cell / warehouse / sheet
+- capture packed box / cargo-place reference
+- link execution back to the governing assembly sheet
+- make responsibility traceable for downstream counterparty / marketplace penalties
 
 ---
 
@@ -264,9 +279,11 @@ shipment_plan → demand → production_plan
 # 4. CRITICAL GAPS
 
 1. ⚠️ production planning and launch exist, but downstream logistics still need shipment-context execution UX
-2. ⚠️ picking workspace exists, but lacks destination/deadline context, grouping, filters, and pagination
-3. ❌ no closed loop between replenished production output and next picking decision
-4. ⚠️ deployed GAS parity for shipment import still needs final confirmation
+2. ⚠️ the current `/picking` surface is still a transitional shipment/picking model; the real operating object should be a universal counterparty-driven assembly sheet
+3. ⚠️ picker UX still lacks a warehouse focus mode, compact/detailed sheet modes, and a matrix that matches the real paper assembly sheet
+4. ⚠️ picker accountability is incomplete: per-cell actor trace, packed box reference, and structured underpick reasons are not yet first-class workflow elements
+5. ❌ no closed loop between replenished production output and the next assembly-sheet decision
+6. ⚠️ deployed GAS parity for shipment import still needs final confirmation
 
 ---
 
@@ -276,11 +293,11 @@ shipment_plan → demand → production_plan
 |------------|--------|
 | Backend     | 90%    |
 | KPI         | 90%    |
-| Logistics   | 88%    |
+| Logistics   | 86%    |
 | Production  | 72%    |
-| Execution   | 40%    |
+| Execution   | 35%    |
 | Decision    | 30%    |
-| UI          | 65%    |
+| UI          | 60%    |
 
 ---
 
@@ -290,17 +307,15 @@ shipment_plan → demand → production_plan
 
 # 6. NEXT STEP (LOCKED)
 
-## 👉 PR-122 — Picking Workspace Context + Filters
+## 👉 PR-123 — Assembly Sheets + Focus Mode
 
 RATIONALE:
 
-- PR-121 already proved the picking workspace can execute the basic flow
-- the current blocker is not “can we pick at all”, but “can supervisors pick with real shipment context”
-- without destination / counterparty / deadline context:
-  - picking remains operationally ambiguous
-  - shortage signals are hard to interpret
-  - existing picking lists are disconnected from the real shipment structure
-- without filters and pagination:
-  - the workspace will stop being usable as shipment volume grows
-  - supervisors cannot reliably prioritize open work
-- this is the smallest coherent step before focus mode and shipment execution
+- owner clarified that the real execution unit is not “one shipment”, but `one counterparty = one assembly sheet`
+- one assembly sheet may contain one or many destination warehouses, with per-warehouse priority and ship-date context
+- the current `/picking` UX is therefore only a transitional bridge, even after PR-122 context/filter improvements
+- the next blocker is not filters anymore, but the mismatch between UI model and real logistics work:
+  - pickers need focus mode on a single warehouse to avoid reading the wrong column
+  - logistics needs compact/detailed views of the same assembly sheet
+  - supervisors need the sheet matrix to stay readable for many warehouses and many SKU rows
+- this is the smallest coherent product step before cell-level assembly actions, box tracking, and shipment execution

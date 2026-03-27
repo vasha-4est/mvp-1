@@ -28,6 +28,12 @@ export type PickingDraftResult =
       ok: true;
       shipment: {
         shipment_id: string;
+        direction: string | null;
+        counterparty: string | null;
+        destination: string | null;
+        destination_warehouse: string | null;
+        planned_date: string | null;
+        deadline_at: string | null;
         warehouse_key: string | null;
         status: string | null;
         planned_lines: number | null;
@@ -168,6 +174,12 @@ export async function getPickingDraft(requestId: string, shipmentId: string): Pr
     ok: true,
     shipment: {
       shipment_id: shipmentResult.data.shipment.shipment_id,
+      direction: shipmentResult.data.shipment.direction,
+      counterparty: shipmentResult.data.shipment.counterparty,
+      destination: shipmentResult.data.shipment.destination,
+      destination_warehouse: shipmentResult.data.shipment.destination_warehouse,
+      planned_date: shipmentResult.data.shipment.planned_date,
+      deadline_at: shipmentResult.data.shipment.deadline_at,
       warehouse_key: shipmentResult.data.shipment.warehouse_key,
       status: shipmentResult.data.shipment.status,
       planned_lines: shipmentResult.data.shipment.planned_lines,

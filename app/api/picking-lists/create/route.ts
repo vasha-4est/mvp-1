@@ -15,6 +15,13 @@ type PickingLineInput = {
 
 type Body = {
   warehouse_key?: unknown;
+  shipment_id?: unknown;
+  direction?: unknown;
+  counterparty?: unknown;
+  destination?: unknown;
+  destination_warehouse?: unknown;
+  planned_date?: unknown;
+  deadline_at?: unknown;
   lines?: unknown;
 };
 
@@ -123,6 +130,13 @@ export async function POST(request: Request) {
     "picking.lists.create",
     {
       warehouse_key: warehouseKey,
+      shipment_id: str(body.shipment_id) || undefined,
+      direction: str(body.direction) || undefined,
+      counterparty: str(body.counterparty) || undefined,
+      destination: str(body.destination) || undefined,
+      destination_warehouse: str(body.destination_warehouse) || undefined,
+      planned_date: str(body.planned_date) || undefined,
+      deadline_at: str(body.deadline_at) || undefined,
       lines,
     },
     auth.requestId
@@ -132,6 +146,13 @@ export async function POST(request: Request) {
     if (shouldUseLocalPickingFallback()) {
       const fallback = await createLocalPickingList({
         warehouse_key: warehouseKey,
+        shipment_id: str(body.shipment_id) || null,
+        direction: str(body.direction) || null,
+        counterparty: str(body.counterparty) || null,
+        destination: str(body.destination) || null,
+        destination_warehouse: str(body.destination_warehouse) || null,
+        planned_date: str(body.planned_date) || null,
+        deadline_at: str(body.deadline_at) || null,
         lines,
       });
       return json(auth.requestId, fallback.replayed === true ? 200 : 201, {

@@ -20,10 +20,10 @@ plan_approval:
   updated_by: "ORCHESTRATOR"
   note: null
 verification:
-  state: "pending"
-  updated_at: "2026-03-27T18:45:00.000Z"
+  state: "approved"
+  updated_at: "2026-03-27T20:30:00.000Z"
   updated_by: "ORCHESTRATOR"
-  note: "Local smoke and UI flow were validated by the human in dev; roadmap completion still waits for merge."
+  note: "PR-121 was locally validated by the human and then merged; roadmap step complete."
 commit: null
 comments:
   -
@@ -32,6 +32,9 @@ comments:
   -
     author: "ORCHESTRATOR"
     body: "Human validated localhost smoke and UI flow for the new `/picking` workspace; keep PR-121 merge-pending and treat PR-122 as the next roadmap step for shipment context, filters, pagination, and clarified shortage behavior."
+  -
+    author: "ORCHESTRATOR"
+    body: "Human confirmed PR-121 was merged and local/main repositories were synchronized; treat PR-121 as complete and PR-122 as the locked next step."
 events:
   -
     type: "status"
@@ -40,6 +43,13 @@ events:
     from: "TODO"
     to: "TODO"
     note: "Prepared next active task record for the roadmap-locked PR-121 Picking Lists Engine + UI step."
+  -
+    type: "status"
+    at: "2026-03-27T20:30:00.000Z"
+    author: "ORCHESTRATOR"
+    from: "TODO"
+    to: "DONE"
+    note: "PR-121 merged after human-validated localhost smoke and UI flow."
 doc_version: 1
 doc_updated_at: "2026-03-27T12:00:00.000Z"
 doc_updated_by: "ORCHESTRATOR"
@@ -65,11 +75,12 @@ sections:
   Verification: |-
     <!-- BEGIN VERIFICATION RESULTS -->
     - 2026-03-27: human-validated localhost smoke and UI flow for `/picking` including draft build, list creation, and line confirmation.
+    - 2026-03-27: human confirmed PR-121 was merged and local/main repositories were synchronized.
     <!-- END VERIFICATION RESULTS -->
   Rollback Plan: |-
     - Revert task-related commit(s).
     - Re-run required checks to confirm rollback safety.
-  Findings: "PR-121 is locally validated but not yet merged; the next scoped gap is shipment-context UX and filtering/pagination on `/picking`."
+  Findings: "PR-121 is complete and merged; the next scoped gap is shipment-context UX and filtering/pagination on `/picking`."
 id_source: "generated"
 ---
 ## Summary
@@ -101,6 +112,7 @@ Build the next execution dependency after production live visibility: generate g
 
 <!-- BEGIN VERIFICATION RESULTS -->
 - 2026-03-27: human-validated localhost smoke and UI flow for `/picking` including draft build, list creation, and line confirmation.
+- 2026-03-27: human confirmed PR-121 was merged and local/main repositories were synchronized.
 <!-- END VERIFICATION RESULTS -->
 
 ## Rollback Plan
@@ -109,4 +121,4 @@ Build the next execution dependency after production live visibility: generate g
 - Re-run required checks to confirm rollback safety.
 
 ## Findings
-PR-121 is locally validated but not yet merged; the next scoped gap is shipment-context UX and filtering/pagination on `/picking`.
+PR-121 is complete and merged; the next scoped gap is shipment-context UX and filtering/pagination on `/picking`.

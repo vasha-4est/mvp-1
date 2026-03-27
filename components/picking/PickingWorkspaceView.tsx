@@ -10,6 +10,13 @@ type PickingListSummary = {
   created_at?: unknown;
   status?: unknown;
   warehouse_key?: unknown;
+  shipment_id?: unknown;
+  direction?: unknown;
+  counterparty?: unknown;
+  destination?: unknown;
+  destination_warehouse?: unknown;
+  planned_date?: unknown;
+  deadline_at?: unknown;
   planned_lines?: unknown;
   planned_qty?: unknown;
 };
@@ -27,6 +34,12 @@ type ShipmentSummary = {
   shipment_id?: unknown;
   created_at?: unknown;
   status?: unknown;
+  direction?: unknown;
+  counterparty?: unknown;
+  destination?: unknown;
+  destination_warehouse?: unknown;
+  planned_date?: unknown;
+  deadline_at?: unknown;
   warehouse_key?: unknown;
   planned_lines?: unknown;
   planned_qty?: unknown;
@@ -92,6 +105,9 @@ type Notice = {
   text: string;
 };
 
+type FilterStatus = "all" | string;
+type PageSize = 5 | 10 | 20;
+
 const panelStyle = {
   border: "1px solid #e5e7eb",
   borderRadius: 16,
@@ -122,6 +138,16 @@ const secondaryButtonStyle = {
 } as const;
 
 const inputStyle = {
+  border: "1px solid #d1d5db",
+  borderRadius: 10,
+  minHeight: 40,
+  padding: "0 12px",
+  fontSize: 14,
+  background: "#fff",
+  color: "#111827",
+} as const;
+
+const controlStyle = {
   border: "1px solid #d1d5db",
   borderRadius: 10,
   minHeight: 40,
@@ -179,6 +205,66 @@ function asPickingDraftLines(value: unknown): PickingDraftLine[] {
   return Array.isArray(value) ? (value as PickingDraftLine[]) : [];
 }
 
+function isOpenStatus(value: unknown): boolean {
+  const status = asRawString(value).toLowerCase();
+  return status !== "done" && status !== "completed" && status !== "closed";
+}
+
+function statusChipStyle(status: string) {
+  const normalized = status.toLowerCase();
+  if (normalized === "ready" || normalized === "done" || normalized === "completed") {
+    return { background: "#ecfdf5", color: "#166534", border: "#86efac" };
+  }
+  if (normalized === "partial_ready" || normalized === "in_progress") {
+    return { background: "#eff6ff", color: "#1d4ed8", border: "#93c5fd" };
+  }
+  if (normalized === "not_ready" || normalized === "blocked" || normalized === "short") {
+    return { background: "#fef2f2", color: "#991b1b", border: "#fca5a5" };
+  }
+  return { background: "#f3f4f6", color: "#374151", border: "#d1d5db" };
+}
+
+function toneStyle(tone: Notice["tone"]) {
+  if (tone === "success") {
+    return { background: "#ecfdf5", color: "#166534", border: "1px solid #86efac" } as const;
+  }
+
+  return { background: "#fef2f2", color: "#991b1b", border: "1px solid #fca5a5" } as const;
+}
+
+function formatDate(value: unknown): string {
+  return formatDateTime(value, { mode: "date" });
+}
+
+function shipmentContextLabel(shipment: ShipmentSummary | null | undefined): string {
+  const counterparty = asRawString(shipment?.counterparty);
+  const destinationWarehouse = asRawString(shipment?.destination_warehouse);
+  const destination = asRawString(shipment?.destination);
+  return counterparty || destinationWarehouse || destination
+    ? [counterparty || "—", destinationWarehouse || destination || "—"].join(" -> ")
+    : "—";
+}
+
+function pickingContextLabel(pickingList: PickingListSummary | null | undefined): string {
+  const counterparty = asRawString(pickingList?.counterparty);
+  const destinationWarehouse = asRawString(pickingList?.destination_warehouse);
+  const destination = asRawString(pickingList?.destination);
+  return counterparty || destinationWarehouse || destination
+    ? [counterparty || "—", destinationWarehouse || destination || "—"].join(" -> ")
+    : "—";
+}
+
+function paginate<T>(items: T[], page: number, pageSize: number) {
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  return {
+    totalPages,
+    safePage,
+    items: items.slice(start, start + pageSize),
+  };
+}
+
 function Metric({ label, value, note }: { label: string; value: string; note?: string }) {
   return (
     <article style={{ ...panelStyle, padding: 14 }}>
@@ -189,12 +275,81 @@ function Metric({ label, value, note }: { label: string; value: string; note?: s
   );
 }
 
-function toneStyle(tone: Notice["tone"]) {
-  if (tone === "success") {
-    return { background: "#ecfdf5", color: "#166534", border: "1px solid #86efac" } as const;
-  }
+function StatusChips(props: {
+  statuses: string[];
+  active: FilterStatus;
+  counts: Record<string, number>;
+  onChange: (status: FilterStatus) => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      {(["all", ...props.statuses] as const).map((status) => {
+        const isActive = props.active === status;
+        const palette = status === "all" ? { background: "#111827", color: "#fff", border: "#111827" } : statusChipStyle(status);
+        return (
+          <button
+            key={status}
+            type="button"
+            onClick={() => props.onChange(status)}
+            style={{
+              borderRadius: 999,
+              border: `1px solid ${isActive ? palette.border : "#d1d5db"}`,
+              background: isActive ? palette.background : "#fff",
+              color: isActive ? palette.color : "#374151",
+              padding: "8px 12px",
+              fontWeight: 600,
+            }}
+          >
+            {status === "all" ? `all (${props.counts.all ?? 0})` : `${status} (${props.counts[status] ?? 0})`}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
-  return { background: "#fef2f2", color: "#991b1b", border: "1px solid #fca5a5" } as const;
+function PaginationControls(props: {
+  label: string;
+  pageSize: PageSize;
+  onPageSizeChange: (size: PageSize) => void;
+  page: number;
+  totalPages: number;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, color: "#6b7280" }}>
+        <span>{props.label}</span>
+        <select
+          value={props.pageSize}
+          onChange={(event) => props.onPageSizeChange(Number(event.target.value) as PageSize)}
+          style={{ ...controlStyle, width: 88 }}
+        >
+          <option value={5}>5</option>
+          <option value={10}>10</option>
+          <option value={20}>20</option>
+        </select>
+      </label>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <button type="button" onClick={props.onPrev} disabled={props.page <= 1} style={{ ...secondaryButtonStyle, opacity: props.page <= 1 ? 0.5 : 1 }}>
+          Prev
+        </button>
+        <small style={{ color: "#6b7280" }}>
+          Page {props.page} / {props.totalPages}
+        </small>
+        <button
+          type="button"
+          onClick={props.onNext}
+          disabled={props.page >= props.totalPages}
+          style={{ ...secondaryButtonStyle, opacity: props.page >= props.totalPages ? 0.5 : 1 }}
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export default function PickingWorkspaceView() {
@@ -209,6 +364,12 @@ export default function PickingWorkspaceView() {
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [draftPayload, setDraftPayload] = useState<PickingDraftPayload | null>(null);
+  const [shipmentStatusFilter, setShipmentStatusFilter] = useState<FilterStatus>("all");
+  const [pickingListStatusFilter, setPickingListStatusFilter] = useState<FilterStatus>("all");
+  const [shipmentPageSize, setShipmentPageSize] = useState<PageSize>(5);
+  const [pickingListPageSize, setPickingListPageSize] = useState<PageSize>(5);
+  const [shipmentPage, setShipmentPage] = useState(1);
+  const [pickingListPage, setPickingListPage] = useState(1);
 
   const loadWorkspace = useCallback(async (options?: { keepSelection?: boolean }) => {
     const keepSelection = options?.keepSelection === true;
@@ -218,8 +379,8 @@ export default function PickingWorkspaceView() {
 
     try {
       const [listsResponse, shipmentsResponse, catalogResponse] = await Promise.all([
-        fetch("/api/picking-lists?limit=50", { method: "GET", cache: "no-store", credentials: "include" }),
-        fetch("/api/shipments?limit=50", { method: "GET", cache: "no-store", credentials: "include" }),
+        fetch("/api/picking-lists?limit=200", { method: "GET", cache: "no-store", credentials: "include" }),
+        fetch("/api/shipments?limit=200", { method: "GET", cache: "no-store", credentials: "include" }),
         fetch("/api/catalog/skus?active=1", { method: "GET", cache: "no-store", credentials: "include" }),
       ]);
 
@@ -262,24 +423,29 @@ export default function PickingWorkspaceView() {
       });
 
       if (keepSelection) {
-        const stillSelectedPickingList = selectedPickingListId
-          ? pickingLists.find((item) => asRawString(item.picking_list_id) === selectedPickingListId)
+        const nextSelectedPickingList = selectedPickingListId
+          ? pickingLists.find((item) => asRawString(item.picking_list_id) === selectedPickingListId) ?? null
           : null;
-        if (!stillSelectedPickingList) {
+        const nextSelectedShipment = selectedShipmentId
+          ? shipments.find((item) => asRawString(item.shipment_id) === selectedShipmentId) ?? null
+          : null;
+
+        if (!nextSelectedPickingList) {
           setSelectedPickingListId("");
           setSelectedPickingList(null);
           setSelectedPickingLines([]);
           setQtyInputs({});
+        } else {
+          setSelectedPickingList(nextSelectedPickingList);
         }
 
-        const stillSelectedShipment = selectedShipmentId
-          ? shipments.find((item) => asRawString(item.shipment_id) === selectedShipmentId)
-          : null;
-        if (!stillSelectedShipment) {
+        if (!nextSelectedShipment) {
           setSelectedShipmentId("");
           setSelectedShipment(null);
           setSelectedShipmentLines([]);
           setDraftPayload(null);
+        } else {
+          setSelectedShipment(nextSelectedShipment);
         }
       }
     } catch {
@@ -379,21 +545,84 @@ export default function PickingWorkspaceView() {
   const pickingLists = state.status === "ready" ? state.pickingLists : [];
   const shipments = state.status === "ready" ? state.shipments : [];
 
-  const openLists = useMemo(
+  const shipmentStatuses = useMemo(
     () =>
-      pickingLists.filter((item) => {
-        const status = asRawString(item.status).toLowerCase();
-        return status !== "done" && status !== "completed" && status !== "closed";
-      }).length,
+      Array.from(new Set(shipments.map((item) => asRawString(item.status)).filter(Boolean))).sort((left, right) => left.localeCompare(right)),
+    [shipments]
+  );
+  const pickingListStatuses = useMemo(
+    () =>
+      Array.from(new Set(pickingLists.map((item) => asRawString(item.status)).filter(Boolean))).sort((left, right) => left.localeCompare(right)),
     [pickingLists]
   );
 
-  const openLines = useMemo(
+  const shipmentStatusCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: shipments.length };
+    for (const item of shipments) {
+      const status = asRawString(item.status);
+      if (!status) continue;
+      counts[status] = (counts[status] ?? 0) + 1;
+    }
+    return counts;
+  }, [shipments]);
+
+  const pickingStatusCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: pickingLists.length };
+    for (const item of pickingLists) {
+      const status = asRawString(item.status);
+      if (!status) continue;
+      counts[status] = (counts[status] ?? 0) + 1;
+    }
+    return counts;
+  }, [pickingLists]);
+
+  const filteredShipments = useMemo(
     () =>
-      selectedPickingLines.filter((line) => {
-        const status = asRawString(line.task_status || line.status).toLowerCase();
-        return status !== "done" && status !== "completed" && status !== "closed";
-      }).length,
+      shipments
+        .filter((item) => shipmentStatusFilter === "all" || asRawString(item.status) === shipmentStatusFilter)
+        .slice()
+        .sort((left, right) => {
+          const counterpartyCompare = asRawString(left.counterparty).localeCompare(asRawString(right.counterparty));
+          if (counterpartyCompare !== 0) return counterpartyCompare;
+          const destinationWarehouseCompare = asRawString(left.destination_warehouse).localeCompare(asRawString(right.destination_warehouse));
+          if (destinationWarehouseCompare !== 0) return destinationWarehouseCompare;
+          return asRawString(left.deadline_at).localeCompare(asRawString(right.deadline_at)) || asRawString(left.shipment_id).localeCompare(asRawString(right.shipment_id));
+        }),
+    [shipments, shipmentStatusFilter]
+  );
+
+  const filteredPickingLists = useMemo(
+    () =>
+      pickingLists
+        .filter((item) => pickingListStatusFilter === "all" || asRawString(item.status) === pickingListStatusFilter)
+        .slice()
+        .sort((left, right) => {
+          return (
+            asRawString(right.created_at).localeCompare(asRawString(left.created_at)) ||
+            asRawString(left.counterparty).localeCompare(asRawString(right.counterparty)) ||
+            asRawString(left.destination_warehouse).localeCompare(asRawString(right.destination_warehouse))
+          );
+        }),
+    [pickingLists, pickingListStatusFilter]
+  );
+
+  useEffect(() => {
+    setShipmentPage(1);
+  }, [shipmentStatusFilter, shipmentPageSize]);
+
+  useEffect(() => {
+    setPickingListPage(1);
+  }, [pickingListStatusFilter, pickingListPageSize]);
+
+  const pagedShipments = useMemo(() => paginate(filteredShipments, shipmentPage, shipmentPageSize), [filteredShipments, shipmentPage, shipmentPageSize]);
+  const pagedPickingLists = useMemo(
+    () => paginate(filteredPickingLists, pickingListPage, pickingListPageSize),
+    [filteredPickingLists, pickingListPage, pickingListPageSize]
+  );
+
+  const openLists = useMemo(() => pickingLists.filter((item) => isOpenStatus(item.status)).length, [pickingLists]);
+  const openLines = useMemo(
+    () => selectedPickingLines.filter((line) => isOpenStatus(line.task_status || line.status)).length,
     [selectedPickingLines]
   );
 
@@ -406,12 +635,16 @@ export default function PickingWorkspaceView() {
     [draftPayload]
   );
 
+  const hasDraftForSelectedShipment =
+    Boolean(selectedShipmentId) && asRawString(draftPayload?.shipment?.shipment_id) === selectedShipmentId;
+
   async function buildDraftForShipment() {
     if (!selectedShipmentId) {
       setNotice({ tone: "error", text: "Сначала выберите shipment." });
       return;
     }
 
+    const rebuilding = hasDraftForSelectedShipment;
     setPendingAction("draft");
     setNotice(null);
 
@@ -432,7 +665,9 @@ export default function PickingWorkspaceView() {
       setDraftPayload(payload);
       setNotice({
         tone: "success",
-        text: `Draft собран для shipment ${asRawString(payload.shipment?.shipment_id) || selectedShipmentId}.`,
+        text: rebuilding
+          ? `Draft rebuilt for shipment ${asRawString(payload.shipment?.shipment_id) || selectedShipmentId}. Existing picking lists stay unchanged.`
+          : `Draft built for shipment ${asRawString(payload.shipment?.shipment_id) || selectedShipmentId}. Existing picking lists stay unchanged.`,
       });
     } finally {
       setPendingAction(null);
@@ -458,6 +693,13 @@ export default function PickingWorkspaceView() {
         },
         body: JSON.stringify({
           warehouse_key: selectedShipmentWarehouse,
+          shipment_id: asRawString(selectedShipment.shipment_id),
+          direction: asRawString(selectedShipment.direction),
+          counterparty: asRawString(selectedShipment.counterparty),
+          destination: asRawString(selectedShipment.destination),
+          destination_warehouse: asRawString(selectedShipment.destination_warehouse),
+          planned_date: asRawString(selectedShipment.planned_date),
+          deadline_at: asRawString(selectedShipment.deadline_at),
           lines: actionableDraftLines.map((line) => ({
             sku_id: asRawString(line.sku_id),
             location_id: asRawString(line.location_id),
@@ -466,7 +708,7 @@ export default function PickingWorkspaceView() {
         }),
       });
       const payload = (await response.json().catch(() => null)) as
-        | { ok?: boolean; picking_list_id?: unknown; error?: unknown }
+        | { ok?: boolean; replayed?: unknown; picking_list_id?: unknown; error?: unknown }
         | null;
 
       if (!response.ok) {
@@ -481,15 +723,17 @@ export default function PickingWorkspaceView() {
       }
       setNotice({
         tone: "success",
-        text: nextPickingListId
-          ? `Picking list ${nextPickingListId} создан из shipment ${asRawString(selectedShipment.shipment_id)}.`
-          : "Picking list создан.",
+        text:
+          payload?.replayed === true
+            ? `Using existing picking list ${nextPickingListId || "—"} for the same draft snapshot.`
+            : nextPickingListId
+              ? `Picking list ${nextPickingListId} created from shipment ${asRawString(selectedShipment.shipment_id)}.`
+              : "Picking list created.",
       });
     } finally {
       setPendingAction(null);
     }
   }
-
 
   async function confirmLine(line: PickingLine) {
     const pickingListId = asRawString(selectedPickingList?.picking_list_id);
@@ -538,7 +782,7 @@ export default function PickingWorkspaceView() {
         <div>
           <h1 style={{ margin: 0 }}>Picking Workspace</h1>
           <p style={{ margin: "6px 0 0", color: "#4b5563" }}>
-            Operator-facing execution surface for shipment candidates, picking lists, and line confirmation.
+            Shipment-driven picking with explicit draft snapshots, shipment context, and execution-safe list handling.
           </p>
         </div>
         <button type="button" onClick={() => void loadWorkspace({ keepSelection: true })} disabled={state.status === "loading"} style={secondaryButtonStyle}>
@@ -551,13 +795,13 @@ export default function PickingWorkspaceView() {
         <Metric label="Selected list open lines" value={String(openLines)} note={selectedPickingListId ? selectedPickingListId : "Выберите list"} />
         <Metric
           label="Shipment candidates"
-          value={String(shipments.length)}
-          note={selectedShipmentId ? `selected ${selectedShipmentId}` : "Для draft source"}
+          value={String(filteredShipments.length)}
+          note={shipmentStatusFilter === "all" ? "Все статусы" : `Filter: ${shipmentStatusFilter}`}
         />
         <Metric
-          label="Draft suggested qty"
+          label="Available now"
           value={String(asInt(draftPayload?.summary?.total_suggested_qty))}
-          note={draftPayload ? "Shipment + inventory state" : "Соберите draft"}
+          note={draftPayload ? "Current inventory for selected shipment" : "Соберите draft"}
         />
       </div>
 
@@ -579,35 +823,40 @@ export default function PickingWorkspaceView() {
         </div>
       ) : null}
 
-      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "minmax(280px, 1fr) minmax(280px, 1fr) minmax(320px, 1.2fr)" }}>
-        <article style={panelStyle}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-            <div>
-              <h2 style={{ margin: 0, fontSize: 18 }}>Shipment candidates</h2>
-              <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: 14 }}>Cross-check current shipment demand before list creation.</p>
-            </div>
+      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "minmax(320px, 1.1fr) minmax(320px, 1.1fr) minmax(360px, 1.3fr)" }}>
+        <article style={{ ...panelStyle, display: "grid", gap: 12 }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 18 }}>Shipment candidates</h2>
+            <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: 14 }}>
+              Sorted closer to counterparty {"->"} destination warehouse {"->"} shipment, then draft into SKU-level suggestions.
+            </p>
           </div>
-          <div style={{ marginTop: 12, overflowX: "auto" }}>
+
+          <StatusChips statuses={shipmentStatuses} active={shipmentStatusFilter} counts={shipmentStatusCounts} onChange={setShipmentStatusFilter} />
+
+          <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  <th align="left" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>shipment</th>
+                  <th align="left" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>context</th>
                   <th align="left" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>status</th>
                   <th align="right" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>qty</th>
                 </tr>
               </thead>
               <tbody>
-                {shipments.length === 0 ? (
+                {pagedShipments.items.length === 0 ? (
                   <tr>
-                    <td colSpan={3} style={{ paddingTop: 12, color: "#6b7280" }}>No shipments available.</td>
+                    <td colSpan={3} style={{ paddingTop: 12, color: "#6b7280" }}>No shipments match the current filter.</td>
                   </tr>
                 ) : (
-                  shipments.map((shipment) => {
+                  pagedShipments.items.map((shipment) => {
                     const shipmentId = asRawString(shipment.shipment_id);
                     const isSelected = shipmentId === selectedShipmentId;
+                    const status = asRawString(shipment.status) || "—";
+                    const palette = statusChipStyle(status);
                     return (
                       <tr key={shipmentId || Math.random()}>
-                        <td style={{ padding: "10px 0" }}>
+                        <td style={{ padding: "10px 0", verticalAlign: "top" }}>
                           <button
                             type="button"
                             onClick={() => void loadShipmentDetail(shipmentId)}
@@ -617,16 +866,38 @@ export default function PickingWorkspaceView() {
                               background: "transparent",
                               color: isSelected ? "#1d4ed8" : "#111827",
                               cursor: "pointer",
-                              fontWeight: isSelected ? 700 : 500,
+                              fontWeight: isSelected ? 700 : 600,
                               padding: 0,
+                              textAlign: "left",
                             }}
                           >
-                            {shipmentId || "—"}
+                            {asString(shipment.counterparty)}
                           </button>
-                          <div style={{ color: "#6b7280", fontSize: 12 }}>{asString(shipment.warehouse_key)}</div>
+                          <div style={{ color: "#374151", fontSize: 13, marginTop: 4 }}>{asString(shipment.destination_warehouse || shipment.destination)}</div>
+                          <div style={{ color: "#6b7280", fontSize: 12, marginTop: 4 }}>
+                            {shipmentId || "—"} • {asString(shipment.direction)} • {formatDate(shipment.planned_date)}
+                          </div>
+                          <div style={{ color: "#6b7280", fontSize: 12 }}>Deadline: {formatDateTime(shipment.deadline_at)}</div>
                         </td>
-                        <td style={{ padding: "10px 0" }}>{asString(shipment.status)}</td>
-                        <td align="right" style={{ padding: "10px 0" }}>{asString(shipment.planned_qty)}</td>
+                        <td style={{ padding: "10px 0", verticalAlign: "top" }}>
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              borderRadius: 999,
+                              border: `1px solid ${palette.border}`,
+                              background: palette.background,
+                              color: palette.color,
+                              padding: "6px 10px",
+                              fontWeight: 600,
+                            }}
+                          >
+                            {status}
+                          </span>
+                        </td>
+                        <td align="right" style={{ padding: "10px 0", verticalAlign: "top" }}>
+                          <div>{asString(shipment.planned_qty)}</div>
+                          <div style={{ color: "#6b7280", fontSize: 12 }}>{asString(shipment.planned_lines)} lines</div>
+                        </td>
                       </tr>
                     );
                   })
@@ -634,34 +905,58 @@ export default function PickingWorkspaceView() {
               </tbody>
             </table>
           </div>
+
+          {filteredShipments.length > 0 ? (
+            <PaginationControls
+              label="Rows"
+              pageSize={shipmentPageSize}
+              onPageSizeChange={setShipmentPageSize}
+              page={pagedShipments.safePage}
+              totalPages={pagedShipments.totalPages}
+              onPrev={() => setShipmentPage((page) => Math.max(1, page - 1))}
+              onNext={() => setShipmentPage((page) => Math.min(pagedShipments.totalPages, page + 1))}
+            />
+          ) : null}
         </article>
 
-        <article style={panelStyle}>
+        <article style={{ ...panelStyle, display: "grid", gap: 12 }}>
           <div>
             <h2 style={{ margin: 0, fontSize: 18 }}>Picking lists</h2>
-            <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: 14 }}>Deterministic current execution state from picking_lists.</p>
+            <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: 14 }}>
+              Existing lists remain immutable execution snapshots even when a later draft is rebuilt.
+            </p>
           </div>
-          <div style={{ marginTop: 12, overflowX: "auto" }}>
+
+          <StatusChips
+            statuses={pickingListStatuses}
+            active={pickingListStatusFilter}
+            counts={pickingStatusCounts}
+            onChange={setPickingListStatusFilter}
+          />
+
+          <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  <th align="left" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>list</th>
+                  <th align="left" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>context</th>
                   <th align="left" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>status</th>
                   <th align="right" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>qty</th>
                 </tr>
               </thead>
               <tbody>
-                {pickingLists.length === 0 ? (
+                {pagedPickingLists.items.length === 0 ? (
                   <tr>
-                    <td colSpan={3} style={{ paddingTop: 12, color: "#6b7280" }}>No picking lists available.</td>
+                    <td colSpan={3} style={{ paddingTop: 12, color: "#6b7280" }}>No picking lists match the current filter.</td>
                   </tr>
                 ) : (
-                  pickingLists.map((item) => {
+                  pagedPickingLists.items.map((item) => {
                     const pickingListId = asRawString(item.picking_list_id);
                     const isSelected = pickingListId === selectedPickingListId;
+                    const status = asRawString(item.status) || "—";
+                    const palette = statusChipStyle(status);
                     return (
                       <tr key={pickingListId || Math.random()}>
-                        <td style={{ padding: "10px 0" }}>
+                        <td style={{ padding: "10px 0", verticalAlign: "top" }}>
                           <button
                             type="button"
                             onClick={() => void loadPickingListDetail(pickingListId)}
@@ -671,16 +966,37 @@ export default function PickingWorkspaceView() {
                               background: "transparent",
                               color: isSelected ? "#1d4ed8" : "#111827",
                               cursor: "pointer",
-                              fontWeight: isSelected ? 700 : 500,
+                              fontWeight: isSelected ? 700 : 600,
                               padding: 0,
+                              textAlign: "left",
                             }}
                           >
-                            {pickingListId || "—"}
+                            {asString(item.counterparty || item.picking_list_id)}
                           </button>
-                          <div style={{ color: "#6b7280", fontSize: 12 }}>{formatDateTime(item.created_at)}</div>
+                          <div style={{ color: "#374151", fontSize: 13, marginTop: 4 }}>{asString(item.destination_warehouse || item.destination)}</div>
+                          <div style={{ color: "#6b7280", fontSize: 12, marginTop: 4 }}>
+                            {asString(item.picking_list_id)} • shipment {asString(item.shipment_id)} • {formatDateTime(item.created_at)}
+                          </div>
                         </td>
-                        <td style={{ padding: "10px 0" }}>{asString(item.status)}</td>
-                        <td align="right" style={{ padding: "10px 0" }}>{asString(item.planned_qty)}</td>
+                        <td style={{ padding: "10px 0", verticalAlign: "top" }}>
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              borderRadius: 999,
+                              border: `1px solid ${palette.border}`,
+                              background: palette.background,
+                              color: palette.color,
+                              padding: "6px 10px",
+                              fontWeight: 600,
+                            }}
+                          >
+                            {status}
+                          </span>
+                        </td>
+                        <td align="right" style={{ padding: "10px 0", verticalAlign: "top" }}>
+                          <div>{asString(item.planned_qty)}</div>
+                          <div style={{ color: "#6b7280", fontSize: 12 }}>{asString(item.planned_lines)} lines</div>
+                        </td>
                       </tr>
                     );
                   })
@@ -688,13 +1004,27 @@ export default function PickingWorkspaceView() {
               </tbody>
             </table>
           </div>
+
+          {filteredPickingLists.length > 0 ? (
+            <PaginationControls
+              label="Rows"
+              pageSize={pickingListPageSize}
+              onPageSizeChange={setPickingListPageSize}
+              page={pagedPickingLists.safePage}
+              totalPages={pagedPickingLists.totalPages}
+              onPrev={() => setPickingListPage((page) => Math.max(1, page - 1))}
+              onNext={() => setPickingListPage((page) => Math.min(pagedPickingLists.totalPages, page + 1))}
+            />
+          ) : null}
         </article>
 
-        <article style={panelStyle}>
+        <article style={{ ...panelStyle, display: "grid", gap: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <div>
               <h2 style={{ margin: 0, fontSize: 18 }}>Selected details</h2>
-              <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: 14 }}>Build backend draft from shipment + inventory, then create list and confirm lines.</p>
+              <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: 14 }}>
+                Rebuild draft recalculates from current inventory. Existing picking lists do not mutate silently.
+              </p>
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button
@@ -703,7 +1033,7 @@ export default function PickingWorkspaceView() {
                 disabled={pendingAction === "draft" || !selectedShipment}
                 style={secondaryButtonStyle}
               >
-                {pendingAction === "draft" ? "Building..." : "Build draft"}
+                {pendingAction === "draft" ? "Building..." : hasDraftForSelectedShipment ? "Rebuild draft" : "Build draft"}
               </button>
               <button
                 type="button"
@@ -716,13 +1046,18 @@ export default function PickingWorkspaceView() {
             </div>
           </div>
 
-          <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
+          <div style={{ marginTop: 4, display: "grid", gap: 12 }}>
             <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
               <strong>Shipment</strong>
-              <div style={{ marginTop: 8, color: "#374151", fontSize: 14 }}>
+              <div style={{ marginTop: 8, color: "#374151", fontSize: 14, display: "grid", gap: 4 }}>
+                <div>Context: {shipmentContextLabel(selectedShipment)}</div>
                 <div>ID: {asString(selectedShipment?.shipment_id)}</div>
-                <div>Warehouse: {asString(selectedShipment?.warehouse_key)}</div>
                 <div>Status: {asString(selectedShipment?.status)}</div>
+                <div>Direction: {asString(selectedShipment?.direction)}</div>
+                <div>Destination: {asString(selectedShipment?.destination)}</div>
+                <div>Planned date: {formatDate(selectedShipment?.planned_date)}</div>
+                <div>Deadline: {formatDateTime(selectedShipment?.deadline_at)}</div>
+                <div>Source warehouse: {asString(selectedShipment?.warehouse_key)}</div>
               </div>
               <div style={{ marginTop: 10, overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -736,7 +1071,7 @@ export default function PickingWorkspaceView() {
                   <tbody>
                     {selectedShipmentLines.length === 0 ? (
                       <tr>
-                        <td colSpan={3} style={{ paddingTop: 10, color: "#6b7280" }}>Select a shipment to inspect lines.</td>
+                        <td colSpan={3} style={{ paddingTop: 10, color: "#6b7280" }}>Select a shipment to inspect SKU demand.</td>
                       </tr>
                     ) : (
                       selectedShipmentLines.map((line) => {
@@ -760,10 +1095,11 @@ export default function PickingWorkspaceView() {
 
             <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
               <strong>Draft suggestions</strong>
-              <div style={{ marginTop: 8, color: "#374151", fontSize: 14 }}>
+              <div style={{ marginTop: 8, color: "#374151", fontSize: 14, display: "grid", gap: 4 }}>
                 <div>Actionable lines: {asString(draftPayload?.summary?.actionable_line_count)}</div>
+                <div>Available now: {asString(draftPayload?.summary?.total_suggested_qty)}</div>
+                <div>Requires production: {asString(draftPayload?.summary?.total_short_qty)}</div>
                 <div>Shortage lines: {asString(draftPayload?.summary?.shortage_line_count)}</div>
-                <div>Suggested qty: {asString(draftPayload?.summary?.total_suggested_qty)}</div>
               </div>
               <div style={{ marginTop: 10, overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -772,20 +1108,28 @@ export default function PickingWorkspaceView() {
                       <th align="left" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>sku</th>
                       <th align="left" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>location</th>
                       <th align="right" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>outstanding</th>
-                      <th align="right" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>suggested</th>
-                      <th align="right" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>short</th>
+                      <th align="right" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>available now</th>
+                      <th align="right" style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>requires production</th>
                     </tr>
                   </thead>
                   <tbody>
                     {asPickingDraftLines(draftPayload?.lines).length === 0 ? (
                       <tr>
-                        <td colSpan={5} style={{ paddingTop: 10, color: "#6b7280" }}>Build draft to inspect suggested picking lines.</td>
+                        <td colSpan={5} style={{ paddingTop: 10, color: "#6b7280" }}>
+                          Build or rebuild a draft to inspect the current inventory snapshot.
+                        </td>
                       </tr>
                     ) : (
                       asPickingDraftLines(draftPayload?.lines).map((line) => {
                         const skuId = asRawString(line.sku_id);
+                        const rowTone =
+                          asInt(line.short_qty) > 0
+                            ? { background: "#fff7ed" }
+                            : asInt(line.suggested_qty) > 0
+                              ? { background: "#f8fafc" }
+                              : null;
                         return (
-                          <tr key={asRawString(line.draft_line_id) || skuId}>
+                          <tr key={asRawString(line.draft_line_id) || skuId} style={rowTone ?? undefined}>
                             <td style={{ padding: "10px 0" }}>
                               <div>{skuNameById.get(skuId) || skuId || "—"}</div>
                               <div style={{ color: "#6b7280", fontSize: 12 }}>{skuId || "—"}</div>
@@ -805,10 +1149,14 @@ export default function PickingWorkspaceView() {
 
             <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
               <strong>Picking list</strong>
-              <div style={{ marginTop: 8, color: "#374151", fontSize: 14 }}>
+              <div style={{ marginTop: 8, color: "#374151", fontSize: 14, display: "grid", gap: 4 }}>
+                <div>Context: {pickingContextLabel(selectedPickingList)}</div>
                 <div>ID: {asString(selectedPickingList?.picking_list_id)}</div>
-                <div>Warehouse: {asString(selectedPickingList?.warehouse_key)}</div>
+                <div>Shipment: {asString(selectedPickingList?.shipment_id)}</div>
                 <div>Status: {asString(selectedPickingList?.status)}</div>
+                <div>Planned date: {formatDate(selectedPickingList?.planned_date)}</div>
+                <div>Deadline: {formatDateTime(selectedPickingList?.deadline_at)}</div>
+                <div>Warehouse: {asString(selectedPickingList?.warehouse_key)}</div>
               </div>
               <div style={{ marginTop: 10, overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -869,6 +1217,10 @@ export default function PickingWorkspaceView() {
             </div>
           </div>
         </article>
+      </div>
+
+      <div style={{ color: "#6b7280", fontSize: 13 }}>
+        Last refreshed: {state.status === "ready" ? formatDateTime(state.refreshedAt) : "—"}
       </div>
     </section>
   );
