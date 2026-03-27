@@ -227,10 +227,16 @@ export async function updateLocalLaunchItem(input: {
   };
 
   if (input.update_action === "take") {
+    if (existing.status !== "new") {
+      const assigneeMatchesActor = existing.status === "in_progress" && existing.assignee_user_id === input.actor_user_id;
+      if (!assigneeMatchesActor) {
+        throw new Error("CONFLICT: production launch item already active");
+      }
+    }
     next.status = "in_progress";
-    next.assignee_user_id = input.actor_user_id;
-    next.assignee_role_id = input.actor_role_id;
-    next.assignee_username = input.actor_username;
+    next.assignee_user_id = existing.assignee_user_id ?? input.actor_user_id;
+    next.assignee_role_id = existing.assignee_role_id ?? input.actor_role_id;
+    next.assignee_username = existing.assignee_username ?? input.actor_username;
     next.taken_at = existing.taken_at ?? now;
   } else if (input.update_action === "assign") {
     next.assignee_user_id = input.assignee_user_id ?? null;
@@ -257,6 +263,14 @@ export async function updateLocalLaunchItem(input: {
   nextItems.push(next);
   await writeStore({ items: nextItems });
   return next;
+}
+
+export function isProductionLaunchConflict(error: unknown): boolean {
+  if (typeof error === "object" && error !== null && "message" in error) {
+    return String((error as { message?: unknown }).message || "").startsWith("CONFLICT:");
+  }
+
+  return typeof error === "string" && error.startsWith("CONFLICT:");
 }
 
 export function shouldUseLocalProductionFallback(): boolean {

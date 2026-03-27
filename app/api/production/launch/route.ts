@@ -4,6 +4,7 @@ import { withDevFastTimeout } from "@/lib/dev/localReadFallbacks";
 import { statusForErrorCode } from "@/lib/api/gasError";
 import { callGas } from "@/lib/integrations/gasClient";
 import {
+  isProductionLaunchConflict,
   listLocalLaunchItems,
   shouldUseLocalProductionFallback,
   updateLocalLaunchItem,
@@ -71,6 +72,14 @@ function stringList(value: unknown): string[] {
   }
 
   return value.map((item) => str(item)).filter((item) => item.length > 0);
+}
+
+function asConflictMessage(error: unknown): string {
+  if (typeof error === "object" && error !== null && "message" in error) {
+    return String((error as { message?: unknown }).message || "").replace(/^CONFLICT:\s*/, "") || "Production launch item already active";
+  }
+
+  return typeof error === "string" ? error.replace(/^CONFLICT:\s*/, "") : "Production launch item already active";
 }
 
 async function findExistingLaunchItem(requestId: string, importBatchId: string, skuId: string): Promise<ProductionLaunchItem | null> {
@@ -265,8 +274,10 @@ export async function POST(request: Request) {
     });
   }
 
-  const localItemFallback = shouldUseLocalProductionFallback()
-    ? await updateLocalLaunchItem({
+  let localItemFallback: ProductionLaunchItem | null = null;
+  if (shouldUseLocalProductionFallback()) {
+    try {
+      localItemFallback = await updateLocalLaunchItem({
         import_batch_id: importBatchId,
         sku_id: skuId,
         production_qty: productionQty,
@@ -287,8 +298,19 @@ export async function POST(request: Request) {
         blocked_reason: blockedReason,
         batch_id: batchMeta.batch_id,
         batch_code: batchMeta.batch_code,
-      })
-    : null;
+      });
+    } catch (error) {
+      if (isProductionLaunchConflict(error)) {
+        return json(auth.requestId, 409, {
+          ok: false,
+          error: asConflictMessage(error),
+          code: "CONFLICT",
+        });
+      }
+
+      throw error;
+    }
+  }
 
   const result = await withDevFastTimeout(
     updateProductionLaunch({
@@ -348,28 +370,41 @@ export async function POST(request: Request) {
 
   if (result.ok === false) {
     if (shouldUseLocalProductionFallback()) {
-      const item = await updateLocalLaunchItem({
-        import_batch_id: importBatchId,
-        sku_id: skuId,
-        production_qty: productionQty,
-        done_qty: doneQty,
-        demand_qty: demandQty,
-        shipment_count: shipmentCount,
-        shipment_ids: shipmentIds,
-        earliest_deadline_at: earliestDeadlineAt,
-        priority_reason: priorityReason,
-        actor_user_id: auth.user.user_id,
-        actor_role_id: actorRole,
-        actor_username: auth.user.username,
-        update_action: updateAction as ProductionLaunchAction,
-        assignee_user_id: assigneeUserId || null,
-        assignee_role_id: assigneeRoleId,
-        assignee_username: assigneeUsername || null,
-        status: requestedStatus ? (requestedStatus as ProductionLaunchStatus) : undefined,
-        blocked_reason: blockedReason,
-        batch_id: batchMeta.batch_id,
-        batch_code: batchMeta.batch_code,
-      });
+      let item: ProductionLaunchItem;
+      try {
+        item = await updateLocalLaunchItem({
+          import_batch_id: importBatchId,
+          sku_id: skuId,
+          production_qty: productionQty,
+          done_qty: doneQty,
+          demand_qty: demandQty,
+          shipment_count: shipmentCount,
+          shipment_ids: shipmentIds,
+          earliest_deadline_at: earliestDeadlineAt,
+          priority_reason: priorityReason,
+          actor_user_id: auth.user.user_id,
+          actor_role_id: actorRole,
+          actor_username: auth.user.username,
+          update_action: updateAction as ProductionLaunchAction,
+          assignee_user_id: assigneeUserId || null,
+          assignee_role_id: assigneeRoleId,
+          assignee_username: assigneeUsername || null,
+          status: requestedStatus ? (requestedStatus as ProductionLaunchStatus) : undefined,
+          blocked_reason: blockedReason,
+          batch_id: batchMeta.batch_id,
+          batch_code: batchMeta.batch_code,
+        });
+      } catch (error) {
+        if (isProductionLaunchConflict(error)) {
+          return json(auth.requestId, 409, {
+            ok: false,
+            error: asConflictMessage(error),
+            code: "CONFLICT",
+          });
+        }
+
+        throw error;
+      }
 
       return json(auth.requestId, 201, {
         ok: true,

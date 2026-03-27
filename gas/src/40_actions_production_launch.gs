@@ -82,6 +82,7 @@
       const current = found ? rowFromValues_(header, found.values) : {};
       const currentPayload = parseJsonSafe_(current.payload_json) || {};
       const existingStatus = normalizeStatus_(current.status);
+      assertTakeAllowed_(parsed, current, existingStatus);
       const nextPayload = buildPayload_(currentPayload, parsed, nowTs);
       const nextStatus = resolveNextStatus_(parsed, existingStatus);
       const nextAssigneeUserId = resolveAssigneeUserId_(parsed, current, nextStatus);
@@ -225,7 +226,7 @@
   }
 
   function resolveAssigneeUserId_(parsed, current, nextStatus) {
-    if (parsed.update_action === 'take') return parsed.actor_user_id;
+    if (parsed.update_action === 'take') return str_(current.assignee_user_id) || parsed.actor_user_id;
     if (parsed.update_action === 'assign') return parsed.assignee_user_id;
     if (parsed.update_action === 'status' && nextStatus === 'in_progress') {
       return str_(current.assignee_user_id) || parsed.actor_user_id;
@@ -235,16 +236,39 @@
 
   function resolveAssigneeRoleId_(parsed, current, nextAssigneeUserId) {
     if (!nextAssigneeUserId) return '';
-    if (parsed.update_action === 'take') return parsed.actor_role_id;
+    if (parsed.update_action === 'take') return str_(current.assignee_role_id) || parsed.actor_role_id;
     if (parsed.update_action === 'assign' && parsed.assignee_role_id) return parsed.assignee_role_id;
     return str_(current.assignee_role_id);
   }
 
   function resolveAssigneeUsername_(parsed, current, nextAssigneeUserId) {
     if (!nextAssigneeUserId) return '';
-    if (parsed.update_action === 'take') return parsed.actor_username || nextAssigneeUserId;
+    if (parsed.update_action === 'take') {
+      return str_(currentPayloadValue_(current, 'assignee_username')) || parsed.actor_username || nextAssigneeUserId;
+    }
     if (parsed.update_action === 'assign' && parsed.assignee_username) return parsed.assignee_username;
     return str_(currentPayloadValue_(current, 'assignee_username')) || nextAssigneeUserId;
+  }
+
+  function assertTakeAllowed_(parsed, current, existingStatus) {
+    if (parsed.update_action !== 'take') return;
+    if (!current || !existingStatus || existingStatus === 'new') return;
+
+    const currentAssigneeUserId = str_(current.assignee_user_id);
+    if (existingStatus === 'in_progress' && currentAssigneeUserId && currentAssigneeUserId === parsed.actor_user_id) {
+      return;
+    }
+
+    const currentAssigneeUsername = str_(currentPayloadValue_(current, 'assignee_username')) || currentAssigneeUserId || null;
+    throw new Error(
+      'CONFLICT: production launch item already active | ' +
+        JSON.stringify({
+          entity_id: parsed.entity_id,
+          status: existingStatus,
+          assignee_user_id: currentAssigneeUserId || null,
+          assignee_username: currentAssigneeUsername,
+        })
+    );
   }
 
   function resolveTakenAt_(parsed, current, nextStatus, nowTs) {

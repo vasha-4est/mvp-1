@@ -1,10 +1,10 @@
 ---
 id: "202603262040-L4N8Q2"
 title: "PR-119 production launch engine"
-status: "DOING"
+status: "DONE"
 priority: "high"
 owner: "ORCHESTRATOR"
-revision: 1
+revision: 2
 depends_on: []
 tags:
   - "code"
@@ -23,7 +23,7 @@ verification:
   updated_at: "2026-03-26T20:55:00.000Z"
   updated_by: "TESTER"
   note: "Verified: Next.js production build passed and PR-119 localhost smoke/UI checks are ready for human validation."
-commit: null
+commit: "merged"
 comments:
   -
     author: "ORCHESTRATOR"
@@ -31,6 +31,9 @@ comments:
   -
     author: "TESTER"
     body: "Verified: Next.js production build passed and PR-119 localhost smoke/UI checks are ready for human validation."
+  -
+    author: "ORCHESTRATOR"
+    body: "Verified: PR-119 merged after localhost smoke and UI approval. Roadmap advanced to PR-120 Production Live View as the next locked step."
 events:
   -
     type: "status"
@@ -45,9 +48,16 @@ events:
     author: "TESTER"
     state: "ok"
     note: "Verified: Next.js production build passed and PR-119 localhost smoke/UI checks are ready for human validation."
-doc_version: 1
-doc_updated_at: "2026-03-26T20:55:00.000Z"
-doc_updated_by: "TESTER"
+  -
+    type: "status"
+    at: "2026-03-27T00:00:00.000Z"
+    author: "ORCHESTRATOR"
+    from: "DOING"
+    to: "DONE"
+    note: "Verified: PR-119 merged after localhost smoke and UI approval. Roadmap advanced to PR-120 Production Live View as the next locked step."
+doc_version: 2
+doc_updated_at: "2026-03-27T00:00:00.000Z"
+doc_updated_by: "ORCHESTRATOR"
 description: "Complete the next roadmap dependency by turning the read-only production plan into a governed launch workspace: allow staff to take a SKU into work, assign an operator, and track launch status in an auditable way without introducing live-floor scope or changing batch FSM semantics."
 sections:
   Summary: |-

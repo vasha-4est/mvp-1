@@ -28,6 +28,7 @@ const LINKS = [
   { href: "/shipments/readiness", label: "Shipments" },
   { href: "/shipments/import", label: "Shipment Import" },
   { href: "/production/plan", label: "Production Plan" },
+  { href: "/production/live", label: "Production Live" },
   { href: "/daily/summary", label: "Daily Summary" },
 ] as const;
 
