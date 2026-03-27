@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { withDevFastTimeout } from "@/lib/dev/localReadFallbacks";
+import { getLocalPickingList, shouldUseLocalPickingFallback } from "@/lib/dev/pickingLocal";
 import { statusForErrorCode } from "@/lib/api/gasError";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { readPickingListById } from "@/lib/picking/readPickingSheets";
@@ -28,8 +30,33 @@ export async function GET(request: Request, context: { params: { id: string } })
   const requestId = auth.requestId;
   const id = context.params.id.trim();
 
-  const result = await readPickingListById(requestId, id);
+  const localPickingList = await getLocalPickingList(id);
+  const result = await withDevFastTimeout(
+    readPickingListById(requestId, id),
+    localPickingList
+      ? {
+          ok: true as const,
+          picking_list: localPickingList.picking_list,
+          lines: localPickingList.lines,
+        }
+      : {
+          ok: false as const,
+          code: "NOT_FOUND",
+          error: "Picking list not found",
+        }
+  );
   if (result.ok === false) {
+    if (shouldUseLocalPickingFallback()) {
+      if (localPickingList) {
+        return json(requestId, 200, {
+          ok: true,
+          picking_list: localPickingList.picking_list,
+          lines: localPickingList.lines,
+          fallback: "local",
+        });
+      }
+    }
+
     return json(requestId, statusForPickingError(result.code), {
       ok: false,
       code: result.code,

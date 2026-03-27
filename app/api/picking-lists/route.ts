@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { withDevFastTimeout } from "@/lib/dev/localReadFallbacks";
+import { listLocalPickingLists, shouldUseLocalPickingFallback } from "@/lib/dev/pickingLocal";
 import { statusForErrorCode } from "@/lib/api/gasError";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { readPickingLists } from "@/lib/picking/readPickingSheets";
@@ -31,13 +33,33 @@ export async function GET(request: Request) {
   const parsedLimit = rawLimit ? Number.parseInt(rawLimit, 10) : 50;
   const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50;
 
-  const result = await readPickingLists(requestId, limit);
+  const fallbackItems = await listLocalPickingLists(limit);
+  const result = await withDevFastTimeout(readPickingLists(requestId, limit), {
+    ok: true as const,
+    items: fallbackItems,
+  });
   if (result.ok === false) {
+    if (shouldUseLocalPickingFallback()) {
+      return json(requestId, 200, {
+        ok: true,
+        items: fallbackItems,
+        fallback: "local",
+      });
+    }
+
     return json(requestId, statusForPickingError(result.code), {
       ok: false,
       code: result.code,
       error: result.error,
       ...(result.details ? { details: result.details } : {}),
+    });
+  }
+
+  if (shouldUseLocalPickingFallback() && result.items.length === 0 && fallbackItems.length > 0) {
+    return json(requestId, 200, {
+      ok: true,
+      items: fallbackItems,
+      fallback: "local",
     });
   }
 

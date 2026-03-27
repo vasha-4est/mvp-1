@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { parseErrorPayload } from "@/lib/api/gasError";
+import { confirmLocalPickingLine, shouldUseLocalPickingFallback } from "@/lib/dev/pickingLocal";
 import { requireWritable } from "@/lib/flags/runtime";
 import { callGas } from "@/lib/integrations/gasClient";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
@@ -113,6 +114,29 @@ export async function POST(request: Request) {
   );
 
   if (!gas.ok || !gas.data) {
+    if (shouldUseLocalPickingFallback()) {
+      try {
+        const fallback = await confirmLocalPickingLine({
+          picking_list_id: pickingListId,
+          line_id: lineId,
+          qty_done: qtyDone,
+        });
+        return json(requestId, 201, {
+          ok: true,
+          picking_list_id: fallback.picking_list_id,
+          line_id: fallback.line_id,
+          sku_id: fallback.sku_id,
+          planned_qty: fallback.planned_qty,
+          picked_qty: fallback.picked_qty,
+          task_status: fallback.task_status,
+          short_reason: fallback.short_reason,
+          fallback: "local",
+        });
+      } catch {
+        return json(requestId, 404, { ok: false, code: "NOT_FOUND", error: "Picking line not found" });
+      }
+    }
+
     return mapError(requestId, (gas as { error?: unknown }).error);
   }
 

@@ -26,6 +26,7 @@ const LINKS = [
   { href: "/kpi/throughput-shifts", label: "Throughput Shifts KPI" },
   { href: "/kpi/shipment-sla", label: "KPI Shipment SLA" },
   { href: "/shipments/readiness", label: "Shipments" },
+  { href: "/picking", label: "Picking" },
   { href: "/shipments/import", label: "Shipment Import" },
   { href: "/production/plan", label: "Production Plan" },
   { href: "/production/live", label: "Production Live" },

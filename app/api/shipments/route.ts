@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { withDevFastTimeout } from "@/lib/dev/localReadFallbacks";
+import { listLocalShipments, shouldUseLocalPickingFallback } from "@/lib/dev/pickingLocal";
 import { listShipments } from "@/lib/shipments/readShipments";
 import { REQUEST_ID_HEADER } from "@/lib/obs/requestId";
 import { requireAnyRole } from "@/lib/server/guards";
@@ -54,14 +56,34 @@ export async function GET(request: Request) {
     });
   }
 
-  const result = await listShipments(auth.requestId, limitResult.limit);
+  const fallbackItems = listLocalShipments(limitResult.limit);
+  const result = await withDevFastTimeout(listShipments(auth.requestId, limitResult.limit), {
+    ok: true as const,
+    data: fallbackItems,
+  });
 
   if (result.ok === false) {
+    if (shouldUseLocalPickingFallback()) {
+      return json(auth.requestId, 200, {
+        ok: true,
+        items: fallbackItems,
+        fallback: "local",
+      });
+    }
+
     return json(auth.requestId, statusForShipmentsCode(result.code), {
       ok: false,
       error: result.error,
       code: result.code,
       ...(result.details ? { details: result.details } : {}),
+    });
+  }
+
+  if (shouldUseLocalPickingFallback() && result.data.length === 0 && fallbackItems.length > 0) {
+    return json(auth.requestId, 200, {
+      ok: true,
+      items: fallbackItems,
+      fallback: "local",
     });
   }
 

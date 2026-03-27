@@ -531,6 +531,7 @@ export default function ProductionPlanView() {
         workerUsername: asRawString(workers.find((worker) => asRawString(worker.id) === workerId)?.username),
         plannedQty,
         doneQty,
+        effectiveDoneQty: status === "done" ? Math.max(doneQty, plannedQty) : doneQty,
         progressPercent: plannedQty > 0 ? Math.round((doneQty / plannedQty) * 100) : 0,
         blockedReason: blockedReasons[key] ?? asRawString(launch?.blocked_reason),
         productName: catalogItem?.sku_name || deriveProductName(row),
@@ -588,16 +589,20 @@ export default function ProductionPlanView() {
       rowsWithMeta.reduce(
         (acc, item) => {
           acc.doneQty += item.doneQty;
+          acc.effectiveDoneQty += item.effectiveDoneQty;
           acc.plannedQty += item.plannedQty;
           return acc;
         },
-        { doneQty: 0, plannedQty: 0 }
+        { doneQty: 0, effectiveDoneQty: 0, plannedQty: 0 }
       ),
     [rowsWithMeta]
   );
 
-  const aggregatePercent = aggregateProgress.plannedQty > 0 ? Math.round((aggregateProgress.doneQty / aggregateProgress.plannedQty) * 100) : 0;
-  const requiredPerWorkday = aggregateProgress.plannedQty > 0 ? (aggregateProgress.plannedQty / 5).toFixed(1).replace(".", ",") : "0";
+  const aggregatePercent =
+    aggregateProgress.plannedQty > 0 ? Math.round((aggregateProgress.effectiveDoneQty / aggregateProgress.plannedQty) * 100) : 0;
+  const remainingQty = Math.max(0, aggregateProgress.plannedQty - aggregateProgress.effectiveDoneQty);
+  const requiredPerWorkday = Math.ceil(aggregateProgress.plannedQty / 5);
+  const requiredPerWorkdayRemaining = Math.ceil(remainingQty / 5);
 
   const statusCounts = useMemo(() => {
     const counts: Record<"all" | ProductionLaunchStatus, number> = { all: rowsWithMeta.length, new: 0, in_progress: 0, blocked: 0, done: 0 };
@@ -696,7 +701,9 @@ export default function ProductionPlanView() {
               <Metric label="SKUs" value={summary.sku_count} />
               <Metric label="Production" value={summary.production_qty} />
               <Metric label="Per day (5d)" value={requiredPerWorkday} />
+              <Metric label="Per day left (5d)" value={requiredPerWorkdayRemaining} />
               <Metric label="Completed qty" value={aggregateProgress.doneQty} />
+              <Metric label="Remaining qty" value={remainingQty} />
               <Metric label="Plan done" value={`${aggregatePercent}%`} />
             </div>
           </article>

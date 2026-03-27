@@ -4,7 +4,7 @@
 
 # 1. CURRENT STATE
 
-## Backend (~88%)
+## Backend (~90%)
 
 DONE:
 - Batch Engine (FSM, idempotency, locking)
@@ -23,7 +23,7 @@ LOGISTICS:
 
 ---
 
-## Frontend (~55%)
+## Frontend (~65%)
 
 - Control Tower UI — basic
 - KPI dashboard — exists, not actionable
@@ -162,7 +162,7 @@ shipment_plan → demand → production_plan
 
 ---
 
-### PR-119 — Production Launch Engine (NEXT LOCKED STEP)
+### PR-119 — Production Launch Engine (DONE / MERGED)
 
 - take into work
 - assign worker
@@ -170,7 +170,7 @@ shipment_plan → demand → production_plan
 
 ---
 
-### PR-120 — Production Live View
+### PR-120 — Production Live View (DONE / MERGED)
 
 - who is doing what
 - WIP visibility
@@ -182,22 +182,40 @@ shipment_plan → demand → production_plan
 
 ---
 
-### PR-121 — Picking Lists Engine + UI
+### PR-121 — Picking Lists Engine + UI (LOCAL VALIDATED / MERGE PENDING)
+
+- dedicated `/picking` workspace
+- shipment-driven draft suggestions from current inventory state
+- create governed picking lists
+- confirm picking lines
+- local smoke validated, roadmap completion waits for merge
 
 ---
 
-### PR-122 — Focus Mode (assembly flow)
+### PR-122 — Picking Workspace Context + Filters
+
+- add shipment direction / destination / counterparty context
+- add deadline / planned date visibility
+- group demand closer to `counterparty -> destination warehouse -> SKU`
+- add status filters and pagination to `Shipment candidates`
+- add status filters and pagination to `Picking lists`
+- clarify shortage semantics (`available now` vs `requires production`)
+- support explicit `Rebuild draft` behavior without silently mutating existing picking lists
 
 ---
 
-### PR-123 — Assembly Actions
+### PR-123 — Focus Mode (assembly flow)
+
+---
+
+### PR-124 — Assembly Actions
 
 - confirm work
 - link to picking
 
 ---
 
-### PR-124 — Shipment Execution UI
+### PR-125 — Shipment Execution UI
 
 ---
 
@@ -205,11 +223,11 @@ shipment_plan → demand → production_plan
 
 ---
 
-### PR-125 — Defects Flow
+### PR-126 — Defects Flow
 
 ---
 
-### PR-126 — Incident Engine
+### PR-127 — Incident Engine
 
 ---
 
@@ -217,7 +235,7 @@ shipment_plan → demand → production_plan
 
 ---
 
-### PR-127 — Manual Inventory Entry
+### PR-128 — Manual Inventory Entry
 
 ---
 
@@ -225,7 +243,7 @@ shipment_plan → demand → production_plan
 
 ---
 
-### PR-128 — Control Tower Intelligence
+### PR-129 — Control Tower Intelligence
 
 - recommendations
 - bottlenecks
@@ -245,9 +263,9 @@ shipment_plan → demand → production_plan
 
 # 4. CRITICAL GAPS
 
-1. ⚠️ production planning exists, but no launch/take-into-work flow yet
-2. ❌ no picking UI
-3. ❌ no execution loop
+1. ⚠️ production planning and launch exist, but downstream logistics still need shipment-context execution UX
+2. ⚠️ picking workspace exists, but lacks destination/deadline context, grouping, filters, and pagination
+3. ❌ no closed loop between replenished production output and next picking decision
 4. ⚠️ deployed GAS parity for shipment import still needs final confirmation
 
 ---
@@ -256,29 +274,33 @@ shipment_plan → demand → production_plan
 
 | Area        | Progress |
 |------------|--------|
-| Backend     | 88%    |
+| Backend     | 90%    |
 | KPI         | 90%    |
-| Logistics   | 85%    |
-| Production  | 40%    |
-| Execution   | 25%    |
+| Logistics   | 88%    |
+| Production  | 72%    |
+| Execution   | 40%    |
 | Decision    | 30%    |
-| UI          | 55%    |
+| UI          | 65%    |
 
 ---
 
-## TOTAL: ~68%
+## TOTAL: ~74%
 
 ---
 
 # 6. NEXT STEP (LOCKED)
 
-## 👉 PR-118 — Production Planning Engine
+## 👉 PR-122 — Picking Workspace Context + Filters
 
 RATIONALE:
 
-- everything depends on demand
-- production must be driven by shipment plan
-- without it:
-  - launch meaningless
-  - picking disconnected
-  - control tower incomplete
+- PR-121 already proved the picking workspace can execute the basic flow
+- the current blocker is not “can we pick at all”, but “can supervisors pick with real shipment context”
+- without destination / counterparty / deadline context:
+  - picking remains operationally ambiguous
+  - shortage signals are hard to interpret
+  - existing picking lists are disconnected from the real shipment structure
+- without filters and pagination:
+  - the workspace will stop being usable as shipment volume grows
+  - supervisors cannot reliably prioritize open work
+- this is the smallest coherent step before focus mode and shipment execution
