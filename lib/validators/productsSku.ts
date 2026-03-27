@@ -6,6 +6,7 @@ export type CatalogSku = {
   sku_type: SkuType;
   sub_category: string | null;
   active: 0 | 1;
+  photo_url?: string | null;
 };
 
 export type ProductsSkuSchemaError = {
@@ -108,5 +109,6 @@ export function normalizeCatalogSku(raw: unknown): CatalogSku | null {
     sku_type: skuType,
     sub_category: normalizeSubCategory(row.sub_category),
     active,
+    photo_url: normalizeSubCategory(row.photo_url),
   };
 }

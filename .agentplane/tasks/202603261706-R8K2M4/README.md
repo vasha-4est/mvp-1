@@ -1,10 +1,10 @@
 ---
 id: "202603261706-R8K2M4"
 title: "PR-118 production planning engine"
-status: "DOING"
+status: "DONE"
 priority: "high"
-owner: "CODER"
-revision: 1
+owner: "ORCHESTRATOR"
+revision: 2
 depends_on: []
 tags:
   - "code"
@@ -23,11 +23,14 @@ verification:
   updated_at: "2026-03-26T17:28:00.000Z"
   updated_by: "TESTER"
   note: "Verified: production build passed, reviewer-raised priority leak was fixed, and PR-118 localhost smoke/UI checks are ready for human validation."
-commit: null
+commit: "merged"
 comments:
   -
     author: "ORCHESTRATOR"
     body: "Start: Implement PR-118 production planning engine as the next roadmap dependency by deriving a read-only production plan from the staged shipment plan and current inventory, with the smallest additive UI/API surface and no new tables."
+  -
+    author: "ORCHESTRATOR"
+    body: "Verified: PR-118 merged after localhost smoke and UI approval. Roadmap advanced to PR-119 Production Launch Engine as the next locked step."
 events:
   -
     type: "status"
@@ -36,9 +39,16 @@ events:
     from: "TODO"
     to: "DOING"
     note: "Start: Implement PR-118 production planning engine as the next roadmap dependency by deriving a read-only production plan from the staged shipment plan and current inventory, with the smallest additive UI/API surface and no new tables."
-doc_version: 1
-doc_updated_at: "2026-03-26T17:28:00.000Z"
-doc_updated_by: "TESTER"
+  -
+    type: "status"
+    at: "2026-03-26T18:05:00.000Z"
+    author: "ORCHESTRATOR"
+    from: "DOING"
+    to: "DONE"
+    note: "Verified: PR-118 merged after localhost smoke and UI approval. Roadmap advanced to PR-119 Production Launch Engine as the next locked step."
+doc_version: 2
+doc_updated_at: "2026-03-26T18:05:00.000Z"
+doc_updated_by: "ORCHESTRATOR"
 description: "Complete the next roadmap dependency by turning the staged shipment plan into an actionable production plan: compute SKU demand after available inventory coverage, prioritize what production must make next, and expose the result in the smallest additive UI/API layer without entering launch/execution scope."
 sections:
   Summary: |-
