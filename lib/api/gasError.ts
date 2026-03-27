@@ -74,6 +74,7 @@ export function statusForErrorCode(code: string): number {
   if (code === "VALIDATION_ERROR" || code === "BAD_REQUEST") return 400;
 
   if (
+    code === "CONFLICT" ||
     code === "DRYING_NOT_FINISHED" ||
     code === "ILLEGAL_TRANSITION" ||
     code === "IDEMPOTENCY_KEY_REUSE"
